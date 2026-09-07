@@ -1,0 +1,13 @@
+pyqt6>=6.6.0
+pyqtdarktheme>=2.1.0
+ollama>=0.1.6
+pyautogui>=0.9.54
+mss>=9.0.1
+pillow>=10.2.0
+opencv-python>=4.9.0
+playwright>=1.41.0
+chromadb>=0.4.22
+sentence-transformers>=2.3.1
+python-dotenv>=1.0.0
+loguru>=0.7.2
+psutil>=5.9.8
