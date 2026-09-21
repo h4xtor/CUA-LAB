@@ -1,6 +1,16 @@
 import pytest
 
 
+@pytest.mark.parametrize('label', ['Multiplicer med', 'Er lig med', 'Divider med', 'Ryd post'])
+def test_danish_calculator_known_buttons(label):
+    from cua_lab.safety import classify
+    action = {'tool':'click','arguments':{'pid':1,'window_id':2,'element_token':'s:1'}}
+    obs = {'window':{'pid':1,'window_id':2,'window_title':'Lommeregner','elements':[{'element_token':'s:1','label':label}]}}
+    assert classify(action, obs) is None
+    obs['window']['window_title'] = 'Other app'
+    assert classify(action, obs) is not None
+
+
 def test_unknown_tool_rejected():
     from cua_lab.protocol import validate_action
     with pytest.raises(ValueError):

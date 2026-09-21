@@ -1,6 +1,6 @@
 # CUA LAB 0.1.0
 
-A local Windows computer-use workspace: Qwen via OpenRouter plans actions, Cua Driver executes them, and the app shows observations, approvals and verification. **Development build: interactive Windows acceptance is not yet verified.** See [test report](docs/TEST_REPORT.md).
+A local Windows computer-use workspace: Qwen via OpenRouter plans actions, Cua Driver executes them, and the app shows observations, approvals and verification. **Development build: Windows packaging, native startup and scripted Calculator acceptance verified; live model-driven acceptance remains pending.** See [Windows verification](docs/WINDOWS_VERIFICATION.md).
 
 ## Packaged Windows application
 
@@ -78,4 +78,4 @@ GitHub Actions uses the same script on Windows. CI does **not** perform interact
 
 ## Known limitations
 
-No claim of a verified Windows Calculator run yet. Driver/version-specific live contracts, OpenRouter model/schema support and packaged WebView2 startup must be validated on KESADMIN. Desktop-global input is limited to the driver's primary display; exact window targets may reside on other monitors. No PyAutoGUI fallback, full replay controls, action editing, automatic application updates or calibrated confidence model. Captures currently favor correctness over minimum latency (multiple window snapshots per step). See development memory and test report before continuing work.
+Real Windows Calculator UIA actions produced 437 and packaged WebView2 startup passed on the local Windows machine. That acceptance uses a scripted planner, not live model inference. OpenRouter model/schema support and a fully model-driven run still require an approved configured provider. Desktop-global input is limited to the driver's primary display; exact window targets may reside on other monitors. No PyAutoGUI fallback, full replay controls, action editing, automatic application updates or calibrated confidence model. Captures currently favor correctness over minimum latency (multiple window snapshots per step). See the Windows verification report for tested boundaries.

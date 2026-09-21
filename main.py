@@ -9,6 +9,23 @@ import time
 import urllib.request
 
 
+def report_startup_failure(exc, interactive=True):
+    import traceback
+    from cua_lab.privacy import redact
+    from cua_lab.store import data_dir
+    folder = data_dir() / 'logs'
+    folder.mkdir(parents=True, exist_ok=True)
+    log = folder / 'startup.log'
+    with log.open('a', encoding='utf-8') as output:
+        output.write(time.strftime('%Y-%m-%d %H:%M:%S') + '\n' + redact(''.join(traceback.format_exception(exc))) + '\n')
+    message = f'CUA LAB startup failed: {type(exc).__name__}. Details: {log}'
+    if os.name == 'nt' and interactive:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0x10)
+    elif sys.stderr is not None:
+        print(message, file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--smoke-test', action='store_true')
@@ -29,7 +46,7 @@ def main():
         listener.bind(('127.0.0.1', 8768))
     except OSError:
         message = 'CUA LAB is already running, or port 8768 is occupied.'
-        if os.name == 'nt':
+        if os.name == 'nt' and not args.smoke_test:
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0)
         else:
@@ -40,7 +57,7 @@ def main():
     from cua_lab.server import create_app
     token = secrets.token_urlsafe(32)
     app = create_app(token=token)
-    server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=8768, log_level='warning', access_log=False, timeout_graceful_shutdown=5, loop='asyncio'))
+    server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=8768, log_level='warning', access_log=False, use_colors=False, timeout_graceful_shutdown=5, loop='asyncio'))
     thread = threading.Thread(target=lambda: server.run(sockets=[listener]), name='cua-backend', daemon=True)
     thread.start()
     try:
@@ -57,6 +74,10 @@ def main():
             request = urllib.request.Request('http://127.0.0.1:8768/api/status', headers={'X-Cua-Token': token})
             with urllib.request.urlopen(request, timeout=5) as response:
                 assert json.load(response)['runtime']['status'] == 'idle'
+            for path in ('/', '/static/app.js', '/static/style.css'):
+                with urllib.request.urlopen('http://127.0.0.1:8768'+path, timeout=5) as response:
+                    assert response.read(), f'Empty packaged resource: {path}'
+            (app.state.store.root / 'smoke-test.json').write_text(json.dumps({'status':'passed','checks':['backend','authenticated_status','sqlite','static_resources']}), encoding='utf-8')
             print('PASS: resources, backend, authenticated status, SQLite initialization')
         elif args.browser:
             import webbrowser
@@ -81,10 +102,5 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except Exception as exc:
-        message = 'CUA LAB startup failed: '+type(exc).__name__+'. Check WebView2, dependencies and port 8768.'
-        if os.name == 'nt':
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0x10)
-        else:
-            print(message, file=sys.stderr)
+        report_startup_failure(exc, interactive='--smoke-test' not in sys.argv)
         sys.exit(1)

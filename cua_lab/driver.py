@@ -258,6 +258,11 @@ class CuaDriverController:
                 self.windows=[]
                 if tool=='launch_app':
                     self.target=None
+                    # Background launches deliberately preserve the foreground app.
+                    # Observe the returned window, rather than the user's foreground.
+                    windows=data.get('windows',[])
+                    if len(windows)==1 and data.get('pid') and windows[0].get('window_id'):
+                        self.target={'pid':data['pid'],'window_id':windows[0]['window_id']}
             return {'result':redact(data),'execution_ms':ms}
 
     async def close(self):

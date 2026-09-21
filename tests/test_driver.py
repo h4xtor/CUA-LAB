@@ -2,6 +2,19 @@ import sys
 import pytest
 from cua_lab.driver import MCPTransport,state_fingerprint
 
+
+@pytest.mark.parametrize('windows,expected', [([{'window_id':22}], {'pid':11,'window_id':22}), ([], None), ([{'window_id':22},{'window_id':23}], None)])
+async def test_launch_tracks_exact_returned_window(tmp_path, windows, expected):
+    from cua_lab.driver import CuaDriverController
+    driver = CuaDriverController(tmp_path)
+    driver.schemas = {'launch_app': {'type':'object','properties':{'name':{'enum':['Calculator']}}}}
+    driver.target = {'pid':99,'window_id':100}
+    async def call(name, arguments):
+        return {'pid':11,'windows':windows}, {}, 1
+    driver.call = call
+    await driver.execute({'tool':'launch_app','arguments':{'name':'Calculator'}})
+    assert driver.target == expected
+
 async def test_persistent_mcp_transport_and_owned_process_cleanup(tmp_path):
     script=tmp_path/'fake_driver.py'
     script.write_text('''import sys,json

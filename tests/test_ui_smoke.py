@@ -5,11 +5,16 @@ import time
 import pytest
 
 @pytest.mark.skipif(os.getenv('CUA_UI_TEST')!='1',reason='Optional local browser test')
-def test_real_browser_layout_health_and_failed_task(tmp_path):
+def test_real_browser_layout_health_and_failed_task(tmp_path, monkeypatch):
     import uvicorn
     from playwright.sync_api import sync_playwright, expect
     from cua_lab.server import create_app
-    app=create_app(tmp_path,token='browser-test-token')
+    from cua_lab.driver import CuaDriverController, DriverError
+    class UnavailableDriver(CuaDriverController):
+        async def observe(self, sid, fresh=False):
+            raise DriverError('Acceptance fixture: driver unavailable')
+    monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
+    app=create_app(tmp_path,token='browser-test-token',driver=UnavailableDriver(tmp_path))
     server=uvicorn.Server(uvicorn.Config(app,host='127.0.0.1',port=8768,log_level='error',access_log=False))
     thread=threading.Thread(target=server.run,daemon=True);thread.start()
     deadline=time.monotonic()+10
@@ -26,14 +31,14 @@ def test_real_browser_layout_health_and_failed_task(tmp_path):
             page.locator('#prompt').fill('Inspect desktop read-only')
             page.locator('#start').click()
             expect(page.locator('#state')).to_have_text('FAILED')
-            assert 'Windows interactive desktop required' in page.locator('#notice').inner_text()
+            assert 'Acceptance fixture: driver unavailable' in page.locator('#notice').inner_text()
             page.locator('[data-tab=memory]').click()
             assert page.locator('#learnings').is_visible()
             page.locator('[data-tab=history]').click()
             page.locator('#sessions button').first.click()
-            assert page.locator('#replay .event').count()>0
+            expect(page.locator('#replay .event').first).to_be_visible()
             page.locator('[data-tab=workspace]').click()
-            page.screenshot(path='/tmp/cua-lab-ui.png',full_page=True)
+            page.screenshot(path=str(tmp_path/'cua-lab-ui.png'),full_page=True)
             page.set_viewport_size({'width':760,'height':1000})
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             assert errors==[]
