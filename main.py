@@ -1,27 +1,90 @@
+"""Windows native launcher; smoke mode tests packaging without GUI control."""
+import argparse
+import os
+import secrets
+import socket
 import sys
-import asyncio
-from loguru import logger
-from config import config
-from src.ui.main_window import MainWindow
-import qdarktheme
+import threading
+import time
+import urllib.request
 
-def setup_logging():
-    logger.remove()
-    logger.add(sys.stderr, format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>", level="INFO")
-    logger.info("🚀 OmniRoute Ultimate starter...")
 
 def main():
-    setup_logging()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--smoke-test', action='store_true')
+    parser.add_argument('--browser', action='store_true')
+    args = parser.parse_args()
+    if os.name == 'nt':
+        import ctypes
+        try:
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        except (AttributeError, OSError):
+            pass
+    if os.name != 'nt' and not (args.smoke_test or args.browser):
+        raise RuntimeError('Windows required')
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if os.name == 'nt':
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
     try:
-        app = QApplication(sys.argv)
-        qdarktheme.setup_theme("auto")
-        window = MainWindow()
-        window.show()
-        logger.info("✅ OmniRoute Ultimate klar!")
-        sys.exit(app.exec())
-    except Exception as e:
-        logger.error(f"❌ Kritisk fejl: {e}")
-        sys.exit(1)
+        listener.bind(('127.0.0.1', 8768))
+    except OSError:
+        message = 'CUA LAB is already running, or port 8768 is occupied.'
+        if os.name == 'nt':
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0)
+        else:
+            print(message)
+        return 1
+    listener.listen(128)
+    import uvicorn
+    from cua_lab.server import create_app
+    token = secrets.token_urlsafe(32)
+    app = create_app(token=token)
+    server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=8768, log_level='warning', access_log=False, timeout_graceful_shutdown=5, loop='asyncio'))
+    thread = threading.Thread(target=lambda: server.run(sockets=[listener]), name='cua-backend', daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic()+20
+        while not server.started:
+            if not thread.is_alive() or time.monotonic()>deadline:
+                raise RuntimeError('Backend startup failed')
+            time.sleep(.05)
+        url = 'http://127.0.0.1:8768/#'+token
+        if args.smoke_test:
+            import json
+            with urllib.request.urlopen('http://127.0.0.1:8768/api/health', timeout=5) as response:
+                assert json.load(response)['application'] == 'CUA LAB'
+            request = urllib.request.Request('http://127.0.0.1:8768/api/status', headers={'X-Cua-Token': token})
+            with urllib.request.urlopen(request, timeout=5) as response:
+                assert json.load(response)['runtime']['status'] == 'idle'
+            print('PASS: resources, backend, authenticated status, SQLite initialization')
+        elif args.browser:
+            import webbrowser
+            webbrowser.open(url)
+            print('CUA LAB running at http://127.0.0.1:8768 — Ctrl+C to exit')
+            while thread.is_alive():
+                time.sleep(.2)
+        else:
+            import webview
+            webview.create_window('CUA LAB', url, width=1440, height=1000, min_size=(900, 700), background_color='#0c1016')
+            webview.start(gui='edgechromium', private_mode=True)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+    return 0
 
-if __name__ == "__main__":
-    main()
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except Exception as exc:
+        message = 'CUA LAB startup failed: '+type(exc).__name__+'. Check WebView2, dependencies and port 8768.'
+        if os.name == 'nt':
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0x10)
+        else:
+            print(message, file=sys.stderr)
+        sys.exit(1)

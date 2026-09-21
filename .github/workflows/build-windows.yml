@@ -1,0 +1,27 @@
+name: Build Windows CUA LAB
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore: ['cua_knowledge/**']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Tests, package and startup smoke test
+        shell: pwsh
+        run: ./build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CUA-LAB-windows-x64
+          path: dist/CUA-LAB-windows-x64.zip
+          if-no-files-found: error
