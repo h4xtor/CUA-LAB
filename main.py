@@ -9,6 +9,13 @@ import time
 import urllib.request
 
 
+class NativeDialogs:
+    def choose_gguf(self):
+        import webview
+        selected=webview.windows[0].create_file_dialog(webview.OPEN_DIALOG,allow_multiple=False,file_types=('GGUF model (*.gguf)',))
+        return selected[0] if selected else None
+
+
 def report_startup_failure(exc, interactive=True):
     import traceback
     from cua_lab.privacy import redact
@@ -87,7 +94,7 @@ def main():
                 time.sleep(.2)
         else:
             import webview
-            webview.create_window('CUA LAB', url, width=1440, height=1000, min_size=(900, 700), background_color='#0c1016')
+            webview.create_window('CUA LAB', url, width=1440, height=1000, min_size=(900, 700), background_color='#0c1016', js_api=NativeDialogs())
             webview.start(gui='edgechromium', private_mode=True)
     except KeyboardInterrupt:
         pass

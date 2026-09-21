@@ -1,12 +1,21 @@
 # CUA LAB 0.1.0
 
-A local Windows computer-use workspace: Qwen via OpenRouter plans actions, Cua Driver executes them, and the app shows observations, approvals and verification. **Development build: Windows packaging, native startup and scripted Calculator acceptance verified; live model-driven acceptance remains pending.** See [Windows verification](docs/WINDOWS_VERIFICATION.md).
+A local Windows computer-use workspace: local Ollama/LM Studio models or OpenRouter plan actions, Cua Driver executes them, and the app shows observations, approvals and verification. **Development build: Windows packaging, native startup and scripted Calculator acceptance verified; complete live model-driven acceptance remains pending.** See [Windows verification](docs/WINDOWS_VERIFICATION.md).
 
 ## Packaged Windows application
 
 Download the `CUA-LAB-windows-x64` artifact from the repository's **Actions → Build Windows CUA LAB** run when its build succeeds. Extract the entire bundle and double-click `CUA-LAB\CUA-LAB.exe`. Keep `_internal` beside the executable. Python is bundled; do not copy only the EXE.
 
-Required externally: Windows 10/11 x64, Microsoft Edge WebView2 Runtime, interactive unlocked desktop, Cua Driver 0.28.2+ and a user environment variable `OPENROUTER_API_KEY`. The app never bundles or displays your key. No driver installation or elevation is performed silently.
+Required externally: Windows 10/11 x64, Microsoft Edge WebView2 Runtime, an interactive unlocked desktop and Cua Driver 0.28.2+. Choose a local model server or OpenRouter in **Models**. The app never bundles or displays a saved key. No driver installation or elevation is performed silently.
+
+## Choose a model
+
+- **Ollama:** open Models, choose Ollama, click Start Ollama if needed, Refresh models, select an installed model, then Load local model & use. The app does not download models. It stops only a server it started itself, including that server's Windows runner processes.
+- **GGUF:** in Models → Ollama → Import a local GGUF file, click Choose file, give it a new `cua-...` name, then Import GGUF. Select the imported model and load it. This uses the installed Ollama engine; Python or a separate terminal is not needed. Existing names are never overwritten and source files are preserved. Only architectures supported by Ollama can be imported; separate vision projector files are not imported by this single-file flow.
+- **LM Studio:** enable its local server, choose LM Studio in Models, refresh the list, choose a model, and load/save. The current integration expects a local server without authentication. Loading uses LM Studio's `/api/v1/models/load` endpoint.
+- **OpenRouter:** choose OpenRouter, enter your API key in the password field, select a model, and Save connection. Windows DPAPI encrypts the saved key for your Windows account. Leaving the key blank preserves it. `OPENROUTER_API_KEY` remains supported as a fallback. Credit use is off by default: select an explicit `:free` model / `openrouter/free`, or enable credit use yourself.
+
+Configuration is private in `%LOCALAPPDATA%\CUA-LAB\provider.json`; it is excluded from the bundle. Models cannot be switched while a task or another model operation is active. Local providers accept only loopback HTTP addresses, send no OpenRouter credentials, and never fall back to a cloud provider. Ollama cloud models are rejected. Screenshot input requires a vision-capable model; text models can work with UI Automation.
 
 ## Existing source installation
 
@@ -35,7 +44,8 @@ Internal GUI: `http://127.0.0.1:8768`. The launcher supplies a short-lived local
 
 - `cua_lab/driver.py`: persistent stdio MCP transport, installed-driver discovery and live schema filtering, exact-window observations, snapshot-bound tokens, process cleanup.
 - `protocol.py`, `safety.py`: strict output/action validation, allowlisted tools, read-only enforcement, conservative approvals. Only a small set of recognized Calculator interactions and navigation shortcuts bypass approval.
-- `provider.py`: stateless OpenRouter Responses API, bounded retries, structured output and reported usage. Missing cost is shown as unknown, never estimated as zero.
+- `provider.py`: stateless OpenRouter Responses API and local Ollama / LM Studio structured responses. Missing remote cost is shown as unknown; local API cost is zero.
+- `configuration.py`, `model_service.py`, `local_models.py`: Windows-protected API key, idle-only provider changes, installed-model discovery, explicit local loading and GGUF import.
 - `runtime.py`: single active task, cancellation, pause/step approval epochs, pre-action observation, separate model verification, repetition and failure limits.
 - `server.py`, `static/`: loopback REST/WebSocket dashboard, native WebView2 window via pywebview, history and learning panel.
 - `store.py`, `learning.py`: SQLite private sessions; closed-vocabulary automatic candidate detection; strictly scoped GitHub contents writes.
@@ -44,7 +54,7 @@ Internal GUI: `http://127.0.0.1:8768`. The launcher supplies a short-lived local
 
 Private data lives in `%LOCALAPPDATA%\CUA-LAB`, independently of the install folder. Upgrading the app does not erase it. For isolated testing, override `CUA_LAB_DATA_DIR`.
 
-UIA observations and task text are sent to OpenRouter. Screenshots stay local unless **Send screenshots to OpenRouter** is enabled. Password-like UI prevents capture when detected; this heuristic cannot guarantee that a screenshot or arbitrary UI text contains no private data. Use Take control for credentials and keep sensitive applications out of view. Local screenshots and histories are private but not encrypted by this MVP; use appropriate Windows account/disk protection.
+UIA observations and task text go to the selected provider. Ollama and LM Studio use only the configured local server; OpenRouter sends these inputs to its API. Screenshots are included only when **Send screenshots to selected model** is enabled. Password-like UI prevents capture when detected; this heuristic cannot guarantee that a screenshot or arbitrary UI text contains no private data. Use Take control for credentials and keep sensitive applications out of view. Saved API keys are Windows-encrypted; local screenshots and histories are not encrypted by this MVP.
 
 The runtime cannot run shell commands or write arbitrary repository paths. Unrecognized mutations need one-shot approval. Desktop content is treated as untrusted model input. Validation does not make semantic GUI safety infallible; inspect approvals. STOP prevents subsequent calls and kills the owned MCP process, but cannot undo input already delivered to Windows.
 

@@ -29,9 +29,9 @@ existing narrow safety allowlist. The browser test previously assumed Linux and
 checked asynchronous history before loading finished; it now uses an explicit
 unavailable-driver fixture and waits for the actual history row.
 
-The provider interface and learning detectors remain MVP-level: there is one
-provider implementation and three deterministic detectors. Live model/schema
-compatibility and fully model-driven task completion are still unverified.
+The provider interface now supports OpenRouter, Ollama and LM Studio; learning
+still uses three deterministic detectors. Full model-driven task completion
+remains separate from transport, schema and scripted desktop acceptance.
 Credential detection is heuristic; native input already delivered cannot be
 undone by cancellation. No broader security or production-readiness claim is made.
 
@@ -91,3 +91,31 @@ in temporary test data; no synthetic knowledge was published.
 Startup failures now write redacted tracebacks to the private `logs/startup.log`.
 Automated smoke failures never open a modal error dialog. Build requires a
 machine-readable success report as well as a successful process exit.
+
+## Local models and API settings extension
+
+The user requested both Ollama/LM Studio and GGUF files, plus OpenRouter API
+access. A Models tab now discovers, loads and selects installed models, starts
+the installed Ollama engine explicitly, imports a chosen GGUF under a new name,
+and stores the OpenRouter key using current-user Windows DPAPI. Existing model
+server configuration and default models are preserved. No download or paid
+request was performed. Local HTTP clients bypass proxies and accept only
+loopback addresses. Local models never fall back to a remote provider.
+
+- User-selected `qwen2.5vl:7b`: discovered, loaded, completion/vision capability
+  read from Ollama, and actual schema-constrained verification inference PASS.
+- GGUF import PASS using a temporary hard link to that chosen model's existing
+  GGUF blob. The imported alias advertised completion/vision. Only the temporary
+  test alias was removed afterward; the original model and source were retained.
+- Native-key encryption round trip, secret-free settings response, model-change
+  admission while idle, rejection of nonlocal URLs and cloud models, local
+  structured responses, paid-route gate and import collision tests PASS.
+- Browser checks include provider switching, model settings persistence and
+  history after a controlled driver failure. Browser tests use no real key.
+- LM Studio protocol uses controlled transport tests; no LM Studio server is
+  installed/running for live acceptance. OpenRouter live inference still awaits
+  a key entered by the user. The key should never be pasted into chat.
+
+API references: [Ollama chat](https://docs.ollama.com/api/chat),
+[GGUF import](https://docs.ollama.com/import),
+[LM Studio loading](https://lmstudio.ai/docs/developer/rest/load).
