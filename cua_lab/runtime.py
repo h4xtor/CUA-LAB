@@ -40,6 +40,10 @@ class Runtime:
         self.status='running';self.resume_gate.set();self.recent=[];self.started=time.time()
         self.metrics={'requests':0,'input_tokens':0,'output_tokens':0,'cost':0,'cost_known':True,'failures':0,'actions':0,'retries':0}
         self.driver.invalidate()
+        if hasattr(self.driver,'preferred_app'):
+            names={'Calculator':r'(?i)\bcalculator\b|\blommeregner\b',
+                   'Chrome':r'(?i)\bchrome\b','Microsoft Edge':r'(?i)\bmicrosoft edge\b'}
+            self.driver.preferred_app=next((name for name,pattern in names.items() if re.search(pattern,objective)),None)
         self.store.create(self.sid,objective,{'version':__version__,'model':self.provider.model,'mode':mode,'read_only':self.read_only,'vision':vision})
         self.emit('session_started',self.snapshot())
         self.worker=asyncio.create_task(self._run(),name='cua-task-'+self.sid)
@@ -178,8 +182,15 @@ class Runtime:
                         failures+=1;self.metrics['failures']+=1
                         # Validation errors may contain model text; never emit exception bodies.
                         message='Action/response rejected by validation, safety or evidence checks'
-                        self.emit('error',{'message':message,'error_type':type(exc).__name__})
-                        self.recent.append({'failure':message});fresh=True
+                        hint='Return exactly one valid decision matching the supplied schema and choose an available tool.'
+                        if 'Terminal states cannot contain actions' in str(exc):
+                            hint='A blocked, failed or completed decision must set action to null. To act, use continue and supply exactly one action.'
+                        elif 'An executable state needs an action' in str(exc):
+                            hint='A continue or needs_approval decision must include one available action.'
+                        elif 'string_too_long' in str(exc):
+                            hint='Keep user_message, observation, evidence and expected_result short and within their schema limits.'
+                        self.emit('error',{'message':message,'error_type':type(exc).__name__,'validation_hint':hint})
+                        self.recent.append({'failure':message,'validation_hint':hint});fresh=True
                         if failures>=3:self.status='blocked';break
                 else:self.status='blocked';self.emit('error',{'message':'Maximum task steps reached'})
         except asyncio.CancelledError:

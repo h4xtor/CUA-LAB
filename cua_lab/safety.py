@@ -35,7 +35,7 @@ def classify(action, observation, read_only=False):
             element = next((e for e in state.get('elements', []) if e.get('element_token') == args['element_token']), None)
             if element and not RISK.search(json.dumps(element)):
                 label = str(element.get('label', '')).lower()
-                if re.fullmatch(r'[0-9 .+*/=()\-]+', label) or label in {'one','two','three','four','five','six','seven','eight','nine','zero','equals','multiply by','plus','minus','divide by','clear','clear entry','et','en','to','tre','fire','fem','seks','syv','otte','ni','nul','lig med','gang med','ryd'}:
+                if re.fullmatch(r'[0-9 .+*/=()\-]+', label) or label in {'one','two','three','four','five','six','seven','eight','nine','zero','equals','multiply by','plus','minus','divide by','clear','clear entry','et','en','to','tre','fire','fem','seks','syv','otte','ni','nul','lig med','er lig med','gang med','multiplicer med','divider med','ryd','ryd post'}:
                     return None
     if exact and re.search(r'(?i)chrome|edge|chromium', app):
         if tool == 'hotkey' and [k.lower() for k in args.get('keys', [])] in (['ctrl','l'], ['control','l']):

@@ -9,10 +9,11 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from . import __version__
 from .driver import CuaDriverController,machine_profile,DriverError
-from .provider import OpenRouterProvider
+from .model_service import ModelService
+from .configuration import ProviderSettings
 from .runtime import Runtime
 from .store import Store
 from .learning import LearningBank,Learning
@@ -30,10 +31,23 @@ class ApprovalInput(BaseModel):
     plan_id:str
     choice:Literal['execute','skip','reject']
 
+class SettingsInput(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    settings:ProviderSettings
+    api_key:SecretStr|None=None
+    clear_key:bool=False
+
+class ImportInput(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    settings:ProviderSettings
+    path:str=Field(max_length=4096)
+    name:str=Field(max_length=80)
+
 def create_app(root=None,token=None,driver=None,provider=None):
     resource_root=Path(__file__).resolve().parent.parent
     store=Store(root);driver=driver or CuaDriverController(store.root)
-    provider=provider or OpenRouterProvider(store.root)
+    provider=provider or ModelService(store.root)
+    model_lock=asyncio.Lock()
     bank=LearningBank(store,resource_root);runtime=Runtime(store,driver,provider,bank)
     token=token or secrets.token_urlsafe(32)
     profile=machine_profile()
@@ -75,7 +89,44 @@ def create_app(root=None,token=None,driver=None,provider=None):
     async def health():return {'application':'CUA LAB','version':__version__,'backend':'ready'}
 
     @app.get('/api/status')
-    async def status():return {'version':__version__,'machine':profile,'runtime':runtime.snapshot(),'auto_sync':runtime.auto_sync,'model':provider.model}
+    async def status():return {'version':__version__,'machine':profile,'runtime':runtime.snapshot(),'auto_sync':runtime.auto_sync,'model':provider.model,'provider':getattr(provider,'label','Model provider')}
+
+    def model_service():
+        if not isinstance(provider,ModelService):raise HTTPException(503,'Model settings unavailable for an injected test provider')
+        return provider
+
+    def require_idle():
+        if model_lock.locked() or (runtime.worker and not runtime.worker.done()):
+            raise ValueError('Stop the active task or wait for model loading before changing models')
+
+    @app.get('/api/models/settings')
+    async def model_settings():return model_service().config.public()
+
+    @app.post('/api/models/settings')
+    async def save_model_settings(body:SettingsInput):
+        require_idle()
+        async with model_lock:
+            return await model_service().save(body.settings,body.api_key.get_secret_value() if body.api_key else None,body.clear_key)
+
+    @app.post('/api/models/list')
+    async def list_models(body:ProviderSettings):return {'models':await model_service().models(body)}
+
+    @app.post('/api/models/start')
+    async def start_engine(body:ProviderSettings):
+        require_idle()
+        async with model_lock:return await model_service().local.start(body)
+
+    @app.post('/api/models/load')
+    async def load_model(body:ProviderSettings):
+        require_idle()
+        async with model_lock:return await model_service().local.load(body)
+
+    @app.post('/api/models/import')
+    async def import_model(body:ImportInput):
+        require_idle()
+        async with model_lock:
+            try:return await model_service().local.import_gguf(body.settings,body.path,body.name)
+            except TimeoutError:raise HTTPException(504,'Local import exceeded the 10-minute deadline; source preserved')
 
     @app.post('/api/diagnostics')
     async def diagnostics():
@@ -86,10 +137,12 @@ def create_app(root=None,token=None,driver=None,provider=None):
                 observation=await driver.observe('health',fresh=True)
                 driver_status={'ready':True,'version':driver.version,'desktop':bool(observation.get('windows')),'uia':bool(observation.get('window',{}).get('elements')),'detail':'Real window discovery completed'}
             except (DriverError,TimeoutError) as exc:driver_status={'ready':False,'detail':str(exc)}
-        return {'openrouter':remote,'driver':driver_status,'database':'ready','knowledge_records':len(bank.shared)}
+        return {'openrouter':remote,'provider':{'name':getattr(provider,'label','Model provider'),**remote},'driver':driver_status,'database':'ready','knowledge_records':len(bank.shared)}
 
     @app.post('/api/tasks')
-    async def start(body:TaskInput):return {'session':await runtime.start(**body.model_dump())}
+    async def start(body:TaskInput):
+        if model_lock.locked():raise ValueError('Wait for model setup to finish before starting a task')
+        async with model_lock:return {'session':await runtime.start(**body.model_dump())}
 
     @app.post('/api/control/{control}')
     async def control(control:str):

@@ -1,6 +1,12 @@
 import os
 import re
 
+_private_keys = set()
+
+def register_private_key(value):
+    if value:
+        _private_keys.add(value)
+
 SECRET = re.compile(r'(?i)(?:sk-(?:or-v1-)?[a-z0-9_-]{12,}|gh[pousr]_[a-z0-9_]{12,}|github_pat_[a-z0-9_]{12,}|bearer\s+[a-z0-9._-]{12,}|(?:password|api[_ -]?key|access[_ -]?token)\s*[:=]\s*\S+)')
 
 def redact(value):
@@ -12,6 +18,8 @@ def redact(value):
     if isinstance(value, list):
         return [redact(v) for v in value]
     if isinstance(value, str):
+        for key in _private_keys:
+            value = value.replace(key, '[REDACTED]')
         for name in ('OPENROUTER_API_KEY', 'CUA_LAB_GITHUB_TOKEN'):
             key = os.getenv(name)
             if key:
