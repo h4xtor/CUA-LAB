@@ -12,7 +12,9 @@ import urllib.request
 class NativeDialogs:
     def choose_gguf(self):
         import webview
-        selected=webview.windows[0].create_file_dialog(webview.OPEN_DIALOG,allow_multiple=False,file_types=('GGUF model (*.gguf)',))
+        from pathlib import Path
+        model_dir=Path('C:/AI/Modeller')
+        selected=webview.windows[0].create_file_dialog(webview.OPEN_DIALOG,directory=str(model_dir) if model_dir.is_dir() else '',allow_multiple=False,file_types=('GGUF model (*.gguf)',))
         return selected[0] if selected else None
 
 

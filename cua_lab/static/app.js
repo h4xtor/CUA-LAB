@@ -17,7 +17,7 @@ function connect(){const ws=new WebSocket('ws://'+location.host+'/ws');ws.onopen
 async function memory(){const records=await api('memory');$('memory-count').textContent=records.filter(r=>!r.synced).length;$('learnings').replaceChildren();if(!records.length)$('learnings').textContent='No observed lessons yet. Candidates appear after useful successes or failures.';for(const r of records){const div=document.createElement('div');div.className='learning';const title=document.createElement('strong');title.textContent=r.application+' · '+r.problem.replaceAll('_',' ');const p=document.createElement('p');p.textContent=r.scope+' · '+Math.round(r.confidence*100)+'% · '+r.successes+' successes / '+r.failures+' failures · '+(r.synced?'Synced':'Pending');const s=document.createElement('small');s.textContent='Strategy: '+r.strategy.replaceAll('_',' ');div.append(title,p,s);$('learnings').append(div);}}
 async function sessions(){const data=await api('sessions');$('sessions').replaceChildren();for(const s of data){const row=document.createElement('div');row.className='session';const text=document.createElement('div');text.textContent=s.prompt;const small=document.createElement('small');small.textContent=new Date(s.started*1000).toLocaleString()+' · '+s.machine+' · '+s.status;text.append(small);const b=document.createElement('button');b.textContent='View timeline';b.onclick=run(async()=>{$('replay').replaceChildren();for(const e of await api('sessions/'+s.id))timeline(e,$('replay'));});row.append(text,b);$('sessions').append(row);}}
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=run(async()=>{document.querySelectorAll('.tab').forEach(t=>t.hidden=t.id!==b.dataset.tab);document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));if(b.dataset.tab==='memory')await memory();if(b.dataset.tab==='history')await sessions();if(b.dataset.tab==='models')await modelSettings();}));
-$('task-form').onsubmit=run(async e=>{e.preventDefault();notice('');await api('tasks',{objective:$('prompt').value.trim(),mode:$('mode').value,read_only:$('read-only').checked,vision:$('vision').checked});count=0;$('events').replaceChildren();snapshot((await api('status')).runtime);});
+$('task-form').onsubmit=run(async e=>{e.preventDefault();notice('');count=0;$('event-count').textContent='0 events';$('events').replaceChildren();await api('tasks',{objective:$('prompt').value.trim(),mode:$('mode').value,read_only:$('read-only').checked,vision:$('vision').checked});snapshot((await api('status')).runtime);});
 document.querySelectorAll('[data-control]').forEach(b=>b.onclick=run(async()=>snapshot(await api('control/'+b.dataset.control,{}))));
 document.querySelectorAll('[data-choice]').forEach(b=>b.onclick=run(async()=>{if(!pending)return;await api('approval',{plan_id:pending.id,choice:b.dataset.choice});pending=null;$('approval').hidden=true;}));
 $('health').onclick=run(async()=>{$('health-results').textContent='Checking actual connections…';const h=await api('diagnostics',{});$('health-results').textContent=(h.provider?.name||'Model')+': '+h.openrouter.detail+' | Driver: '+h.driver.detail+' | UIA: '+(h.driver.uia?'Observed':'Not verified');$('debug').textContent=JSON.stringify(h,null,2);});
@@ -26,7 +26,7 @@ $('sync-memory').onclick=run(async()=>{const r=await api('memory/sync',{});notic
 $('pull-memory').onclick=run(async()=>notice((await api('memory/refresh',{})).loaded+' shared records loaded.'));
 $('auto-sync').onchange=run(async()=>{await api('memory/auto/'+($('auto-sync').checked?'on':'off'),{});});
 setInterval(()=>{if(runtime.busy){const s=Math.max(0,Math.floor(Date.now()/1000-runtime.started));$('elapsed').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}},1000);
-run(async()=>{const s=await api('status');$('machine').textContent=s.machine.hostname+' · v'+s.version;showProvider(s);snapshot(s.runtime);await memory();connect();$('health').click();})();
+run(async()=>{const s=await api('status');$('machine').textContent=s.machine.hostname+' · v'+s.version;showProvider(s);snapshot(s.runtime);await memory();connect();$('health').click();await refreshQuickModels();})();
 
 function showProvider(s){$('model').textContent=s.model+' · '+s.provider;$('provider-privacy').textContent=s.provider==='OpenRouter'?'Task text and UI observations go to OpenRouter. Screenshots are included only when enabled. Use Take control for credentials.':s.provider.startsWith('Built in')?'Task text, UI observations and enabled screenshots never leave this computer — the model runs inside CUA LAB itself. Use Take control for credentials.':'Task text, UI observations and enabled screenshots stay with the local model server. Use Take control for credentials.';}
 function selectedSettings(){const gpu=parseInt($('builtin-gpu').value,10);return {provider:$('provider-choice').value,model:$('model-id').value.trim(),base_url:$('engine-url').value.trim(),allow_paid:$('allow-paid').checked,gguf_path:$('builtin-path').value.trim(),gguf_mmproj:$('builtin-mmproj').value.trim(),gguf_ctx:parseInt($('builtin-ctx').value,10)||8192,gguf_gpu_layers:Number.isNaN(gpu)?-1:gpu};}
@@ -34,7 +34,34 @@ function providerFields(){const kind=$('provider-choice').value;$('builtin-setti
 async function modelSettings(){const s=await api('models/settings');$('provider-choice').value=s.provider;$('model-id').value=s.model;$('engine-url').value=s.base_url;$('allow-paid').checked=s.allow_paid;$('builtin-path').value=s.gguf_path||'';$('builtin-mmproj').value=s.gguf_mmproj||'';$('builtin-ctx').value=s.gguf_ctx||8192;$('builtin-gpu').value=s.gguf_gpu_layers??-1;$('router-key').value='';$('clear-key').checked=false;$('key-status').textContent=s.api_key_configured?'API key configured. Leave blank to keep it.':'No API key configured.';providerFields();}
 async function modelOperation(text,fn){const section=$('models');for(const b of section.querySelectorAll('button'))b.disabled=true;$('model-status').textContent=text;try{await fn();}catch(e){$('model-status').textContent=e.message;throw e;}finally{for(const b of section.querySelectorAll('button'))b.disabled=false;}}
 async function refreshModels(){const r=await api('models/list',selectedSettings());$('model-options').replaceChildren();for(const m of r.models){const o=document.createElement('option');o.value=m.id;o.label=m.name||m.id;$('model-options').append(o);}$('model-status').textContent=r.models.length+' models available';}
-async function saveModel(){const payload={settings:selectedSettings(),clear_key:$('clear-key').checked};if($('router-key').value)payload.api_key=$('router-key').value;try{await api('models/settings',payload);}finally{$('router-key').value='';}showProvider(await api('status'));await modelSettings();$('model-status').textContent='Connection saved';}
+async function saveModel(){const payload={settings:selectedSettings(),clear_key:$('clear-key').checked};if($('router-key').value)payload.api_key=$('router-key').value;try{await api('models/settings',payload);}finally{$('router-key').value='';}showProvider(await api('status'));await modelSettings();await refreshQuickModels();$('model-status').textContent='Connection saved';}
+async function refreshQuickModels(){
+  const status=$('quick-model-status'), picker=$('quick-model');
+  status.textContent='Finding installed Ollama models…';
+  const saved=await api('models/settings');
+  const base_url=saved.provider==='ollama'?saved.base_url:'http://127.0.0.1:11434';
+  try{
+    const {api_key_configured,...settings}=saved;
+    const result=await api('models/list',{...settings,provider:'ollama',base_url});
+    picker.replaceChildren();
+    for(const model of result.models){const option=document.createElement('option');option.value=model.id;option.textContent=model.id;picker.append(option);}
+    if(saved.provider==='ollama'&&result.models.some(model=>model.id===saved.model))picker.value=saved.model;
+    status.textContent=result.models.length+' Ollama models available · GGUF files in C:\\AI\\Modeller: use GGUF files / other connections';
+    if(!result.models.length){const option=document.createElement('option');option.textContent='No Ollama models found';option.value='';picker.append(option);}
+  }catch(error){picker.replaceChildren();const option=document.createElement('option');option.value='';option.textContent='Ollama unavailable';picker.append(option);status.textContent=error.message+' · Start Ollama or choose a GGUF file in Models.';}
+}
+$('quick-model-refresh').onclick=run(refreshQuickModels);
+$('quick-model-save').onclick=run(async()=>{
+  const model=$('quick-model').value;if(!model)throw Error('Choose an installed Ollama model first.');
+  const saved=await api('models/settings');
+  const base_url=saved.provider==='ollama'?saved.base_url:'http://127.0.0.1:11434';
+  const {api_key_configured,...settings}=saved;
+  Object.assign(settings,{provider:'ollama',model,base_url});
+  await api('models/settings',{settings});
+  showProvider(await api('status'));
+  $('quick-model-status').textContent=model+' selected for new tasks';
+});
+$('quick-model-settings').onclick=()=>document.querySelector('[data-tab="models"]').click();
 $('provider-choice').onchange=()=>{const p=$('provider-choice').value;$('engine-url').value=p==='lmstudio'?'http://127.0.0.1:1234':'http://127.0.0.1:11434';$('model-id').value='';$('model-options').replaceChildren();providerFields();};
 $('models-refresh').onclick=run(()=>modelOperation('Finding models…',refreshModels));
 $('engine-start').onclick=run(()=>modelOperation('Starting local engine…',async()=>{const r=await api('models/start',selectedSettings());$('model-status').textContent=r.detail;await refreshModels();}));
