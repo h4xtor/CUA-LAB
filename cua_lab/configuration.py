@@ -13,16 +13,27 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class ProviderSettings(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    provider: Literal['openrouter', 'ollama', 'lmstudio'] = 'openrouter'
+    provider: Literal['openrouter', 'ollama', 'lmstudio', 'gguf'] = 'openrouter'
     model: str = Field(default='', max_length=200)
     base_url: str = 'http://127.0.0.1:11434'
     allow_paid: bool = False
+    gguf_path: str = Field(default='', max_length=1024)
+    gguf_mmproj: str = Field(default='', max_length=1024)
+    gguf_ctx: int = Field(default=8192, ge=512, le=131072)
+    gguf_gpu_layers: int = Field(default=-1, ge=-1, le=999)
 
     @field_validator('model')
     @classmethod
     def valid_model(cls, value):
         if any(c.isspace() for c in value) or any(ord(c) < 32 for c in value):
             raise ValueError('Model ID cannot contain whitespace')
+        return value
+
+    @field_validator('gguf_path', 'gguf_mmproj')
+    @classmethod
+    def valid_gguf_path(cls, value):
+        if value and (not value.lower().endswith('.gguf') or any(c in value for c in ('\n', '\r', '"'))):
+            raise ValueError('Must be the full path to a .gguf file')
         return value
 
     @field_validator('base_url')

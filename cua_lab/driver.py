@@ -154,6 +154,7 @@ class CuaDriverController:
         self.version = None
         self.last_observation = {}
         self.lock = asyncio.Lock()
+        self.preferred_app = None
 
     def invalidate(self):
         self.target = None
@@ -202,6 +203,13 @@ class CuaDriverController:
                 data,_,_=await self.call('list_windows',{})
                 self.windows=data.get('windows',[])
             active=active_window()
+            if self.target is None and self.preferred_app:
+                names={'Calculator':('calculator','lommeregner'),'Chrome':('chrome',),'Microsoft Edge':('microsoft edge','msedge')}
+                matches=[w for w in self.windows if w.get('pid') and w.get('window_id')
+                         and any(term in (str(w.get('title',''))+' '+str(w.get('app_name',''))).lower()
+                                 for term in names.get(self.preferred_app,()))]
+                if len(matches)==1:
+                    self.target={'pid':matches[0]['pid'],'window_id':matches[0]['window_id']}
             if self.target is None and active:
                 self.target=next(({'pid':w['pid'],'window_id':w['window_id']} for w in self.windows if w.get('window_id')==active['window_id'] and w.get('pid')),None)
             state={}; image=None; uia_ms=0; shot_ms=0

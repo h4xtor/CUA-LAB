@@ -97,7 +97,8 @@ machine-readable success report as well as a successful process exit.
 The user requested both Ollama/LM Studio and GGUF files, plus OpenRouter API
 access. A Models tab now discovers, loads and selects installed models, starts
 the installed Ollama engine explicitly, imports a chosen GGUF under a new name,
-and stores the OpenRouter key using current-user Windows DPAPI. Existing model
+and runs a GGUF file directly through the bundled llama.cpp engine. It stores
+the OpenRouter key using current-user Windows DPAPI. Existing model
 server configuration and default models are preserved. No download or paid
 request was performed. Local HTTP clients bypass proxies and accept only
 loopback addresses. Local models never fall back to a remote provider.
@@ -115,6 +116,20 @@ loopback addresses. Local models never fall back to a remote provider.
 - LM Studio protocol uses controlled transport tests; no LM Studio server is
   installed/running for live acceptance. OpenRouter live inference still awaits
   a key entered by the user. The key should never be pasted into chat.
+- Direct GGUF: the llama.cpp grammar is generated from the project decision and
+  verification schemas; a controlled local-engine test checks structured
+  verification. The clean packaged smoke test imports the native runtime.
+  Full direct inference with a large GGUF is unverified on this host. When
+  tested, another local model process used about 5 GB of RAM and Windows had
+  under 2 GB free; the user-owned process was not stopped.
+  Built-in inference has a 180-second request deadline. A native computation
+  already running in the Python process may finish after STOP, but its result
+  cannot trigger a later desktop action.
+- A Qwen2.5-VL 7B attempt through Ollama verified real response generation,
+  but did not complete the Calculator task. One response was safely rejected
+  for violating the decision contract; a later run stopped after Ollama
+  returned HTTP 500 while memory was constrained. The scripted Calculator
+  driver test remains the verified Windows action/observation proof.
 
 API references: [Ollama chat](https://docs.ollama.com/api/chat),
 [GGUF import](https://docs.ollama.com/import),

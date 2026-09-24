@@ -14,7 +14,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Build dependencies failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Installed dependency constraints are inconsistent.' }
 & $BuildPython -m pytest -q
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed; packaging aborted.' }
-& $BuildPython -m PyInstaller --noconfirm --clean --onedir --windowed --name CUA-LAB --add-data 'cua_lab/static;cua_lab/static' --add-data 'cua_knowledge;cua_knowledge' --collect-all webview --hidden-import uvicorn.logging --hidden-import uvicorn.loops.asyncio --hidden-import uvicorn.protocols.http.h11_impl --hidden-import uvicorn.protocols.websockets.websockets_impl --hidden-import uvicorn.lifespan.on main.py
+& $BuildPython -m PyInstaller --noconfirm --clean --onedir --windowed --name CUA-LAB --add-data 'cua_lab/static;cua_lab/static' --add-data 'cua_knowledge;cua_knowledge' --collect-all webview --collect-all llama_cpp --hidden-import uvicorn.logging --hidden-import uvicorn.loops.asyncio --hidden-import uvicorn.protocols.http.h11_impl --hidden-import uvicorn.protocols.websockets.websockets_impl --hidden-import uvicorn.lifespan.on main.py
 if ($LASTEXITCODE -ne 0) { throw 'Packaging failed.' }
 $SmokeData = Join-Path ([System.IO.Path]::GetTempPath()) ('cua-lab-build-smoke-' + [guid]::NewGuid())
 $PreviousData = $env:CUA_LAB_DATA_DIR

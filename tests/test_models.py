@@ -69,6 +69,15 @@ async def test_local_cloud_model_refused():
         await local.check_model(ProviderSettings(provider='ollama',model='remote-model'))
 
 
+def test_compact_local_context_preserves_action_contract_without_duplicate_tree():
+    context={'available_tools':{'click':{'type':'object','description':'very long driver prose','properties':{'pid':{'type':'integer','description':'process'}}}},'observation':{'window':{'elements':[{'element_token':'s1:2'}],'tree_markdown':'duplicate'},'latency':{'ms':4}},'objective':'Click'}
+    reduced=LocalProvider._compact_context(context)
+    assert reduced['available_tools']['click']['properties']['pid']=={'type':'integer'}
+    assert reduced['observation']['window']['elements'][0]['element_token']=='s1:2'
+    assert 'tree_markdown' not in reduced['observation']['window']
+    assert 'tree_markdown' in context['observation']['window']
+
+
 async def test_gguf_import_rejects_wrong_file_and_existing_name(tmp_path):
     local=LocalModels()
     settings=ProviderSettings(provider='ollama')
@@ -99,3 +108,54 @@ def test_settings_require_auth_and_cannot_change_during_task(tmp_path):
         try:assert client.post('/api/models/settings',headers=headers,json=body).status_code==409
         finally:app.state.runtime.worker=None
     assert Configuration(tmp_path).settings.model=='openrouter/free'
+
+
+async def test_builtin_gguf_rejects_missing_file(tmp_path):
+    from cua_lab.model_service import ModelService
+    service=ModelService(tmp_path)
+    with pytest.raises(ValueError,match='existing local .gguf file'):
+        await service.save(ProviderSettings(provider='gguf',gguf_path=str(tmp_path/'missing.gguf')))
+    await service.close()
+
+
+async def test_builtin_gguf_save_validates_magic_bytes_and_derives_model_name(tmp_path):
+    from cua_lab.model_service import ModelService
+    service=ModelService(tmp_path)
+    bad=tmp_path/'bad.gguf'
+    bad.write_bytes(b'not a model')
+    with pytest.raises(ValueError,match='not a GGUF model'):
+        await service.save(ProviderSettings(provider='gguf',gguf_path=str(bad)))
+    good=tmp_path/'qwen2.5-7b-instruct-q4_k_m.gguf'
+    good.write_bytes(b'GGUF'+b'\\x00'*32)
+    public=await service.save(ProviderSettings(provider='gguf',gguf_path=str(good)))
+    assert public['model']=='qwen2.5-7b-instruct-q4_k_m'
+    assert service.current.label=='Built in (no external app)'
+    await service.close()
+
+
+async def test_builtin_gguf_health_without_library_installed(tmp_path):
+    from cua_lab.provider import GGUFProvider
+    from cua_lab.configuration import ProviderSettings as Settings
+    missing=tmp_path/'missing.gguf'
+    provider=GGUFProvider(tmp_path,Settings(provider='gguf',gguf_path=str(missing)))
+    health=await provider.health()
+    assert health['connected'] is False and 'not found' in health['detail']
+    await provider.close()
+
+
+async def test_builtin_gguf_structured_verification_uses_local_engine(tmp_path, monkeypatch):
+    from cua_lab.provider import GGUFProvider
+    fixture=tmp_path/'fixture.gguf'
+    fixture.write_bytes(b'GGUF')
+    provider=GGUFProvider(tmp_path,ProviderSettings(provider='gguf',gguf_path=str(fixture)))
+    class LocalEngine:
+        def create_chat_completion(self, **kwargs):
+            assert kwargs['messages'][0]['role']=='system'
+            assert kwargs['temperature']==0
+            assert kwargs['grammar'] is not None
+            return {'choices':[{'message':{'content':'{"satisfied":true,"evidence":"437"}'}}],
+                    'usage':{'prompt_tokens':13,'completion_tokens':7}}
+    monkeypatch.setattr(provider,'_load',lambda:LocalEngine())
+    decision,usage=await provider.verify({'expected_result':'437'})
+    assert decision.satisfied and usage['cost']==0 and usage['input_tokens']==13
+    await provider.close()

@@ -13,7 +13,9 @@ def test_smoke_without_console_streams(tmp_path):
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads((tmp_path/'smoke-test.json').read_text())['status'] == 'passed'
+    report=json.loads((tmp_path/'smoke-test.json').read_text())
+    assert report['status'] == 'passed'
+    assert {'backend','static_resources'} <= set(report['checks'])
 
 
 def test_startup_failure_logged_without_credentials(tmp_path, monkeypatch):

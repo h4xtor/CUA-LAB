@@ -76,6 +76,12 @@ def main():
         url = 'http://127.0.0.1:8768/#'+token
         if args.smoke_test:
             import json
+            checks=['backend','authenticated_status','sqlite','static_resources']
+            if getattr(sys,'frozen',False):
+                from llama_cpp import LlamaGrammar
+                from cua_lab.protocol import Verification
+                assert LlamaGrammar.from_json_schema(json.dumps(Verification.model_json_schema()))
+                checks.append('built_in_gguf_engine')
             with urllib.request.urlopen('http://127.0.0.1:8768/api/health', timeout=5) as response:
                 assert json.load(response)['application'] == 'CUA LAB'
             request = urllib.request.Request('http://127.0.0.1:8768/api/status', headers={'X-Cua-Token': token})
@@ -84,7 +90,7 @@ def main():
             for path in ('/', '/static/app.js', '/static/style.css'):
                 with urllib.request.urlopen('http://127.0.0.1:8768'+path, timeout=5) as response:
                     assert response.read(), f'Empty packaged resource: {path}'
-            (app.state.store.root / 'smoke-test.json').write_text(json.dumps({'status':'passed','checks':['backend','authenticated_status','sqlite','static_resources']}), encoding='utf-8')
+            (app.state.store.root / 'smoke-test.json').write_text(json.dumps({'status':'passed','checks':checks}), encoding='utf-8')
             print('PASS: resources, backend, authenticated status, SQLite initialization')
         elif args.browser:
             import webbrowser

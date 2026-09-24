@@ -3,6 +3,23 @@ import pytest
 from cua_lab.driver import MCPTransport,state_fingerprint
 
 
+async def test_requested_calculator_is_observed_even_when_another_app_is_foreground(tmp_path, monkeypatch):
+    from cua_lab.driver import CuaDriverController
+    import cua_lab.driver as module
+    controller=CuaDriverController(tmp_path)
+    controller.preferred_app='Calculator'
+    async def connect():pass
+    async def call(name,args):
+        if name=='list_windows':return {'windows':[{'pid':9,'window_id':90,'title':'Other app'},{'pid':1,'window_id':2,'title':'Lommeregner'}]}, {}, 1
+        return {'pid':1,'window_id':2,'app_name':'Calculator','elements':[]}, {'content':[]}, 1
+    controller.connect=connect
+    controller.call=call
+    monkeypatch.setattr(module,'active_window',lambda:{'pid':9,'window_id':90})
+    observation=await controller.observe('fixture')
+    assert controller.target=={'pid':1,'window_id':2}
+    assert observation['window']['app_name']=='Calculator'
+
+
 @pytest.mark.parametrize('windows,expected', [([{'window_id':22}], {'pid':11,'window_id':22}), ([], None), ([{'window_id':22},{'window_id':23}], None)])
 async def test_launch_tracks_exact_returned_window(tmp_path, windows, expected):
     from cua_lab.driver import CuaDriverController
