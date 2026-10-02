@@ -12,7 +12,7 @@ def redact(value):
     if isinstance(value, list):
         return [redact(v) for v in value]
     if isinstance(value, str):
-        for name in ('OPENROUTER_API_KEY', 'CUA_LAB_GITHUB_TOKEN'):
+        for name in ('OPENROUTER_API_KEY', 'CUA_LAB_API_KEY', 'OPENAI_API_KEY', 'CUA_LAB_GITHUB_TOKEN'):
             key = os.getenv(name)
             if key:
                 value = value.replace(key, '[REDACTED]')

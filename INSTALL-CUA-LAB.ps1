@@ -10,7 +10,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
 $Driver = Get-Command cua-driver -ErrorAction SilentlyContinue
 if (-not $Driver -and -not $env:CUA_DRIVER_PATH) { Write-Warning 'Cua Driver missing. Install from https://cua.ai/docs/how-to-guides/driver/install or set CUA_DRIVER_PATH.' }
 if ($Driver) { & $Driver.Source --version; & $Driver.Source doctor }
-if ([string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY)) { Write-Warning 'OPENROUTER_API_KEY is missing. Set it in your Windows user environment and reopen CUA LAB.' }
+if ([string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY) -and [string]::IsNullOrWhiteSpace($env:CUA_LAB_API_KEY) -and -not (Get-Command llama-server -ErrorAction SilentlyContinue)) { Write-Warning 'No model backend detected. Set OPENROUTER_API_KEY / CUA_LAB_API_KEY, or install llama.cpp (winget install llama.cpp) for local GGUF models. Choose the backend in the Model tab.' }
 & .\.venv\Scripts\python.exe main.py --smoke-test
 if ($LASTEXITCODE -ne 0) { throw 'CUA LAB initialization failed. Close an existing instance if port 8768 is occupied.' }
 Write-Host 'Setup complete. Run .\START-CUA-LAB.ps1. Use Health check in the GUI before tasks.'

@@ -10,6 +10,12 @@ import urllib.request
 
 
 def main():
+    # A --windowed PyInstaller build has no console: stdout/stderr are None,
+    # which breaks uvicorn's logging setup and any print().
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, 'w')
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, 'w')
     parser = argparse.ArgumentParser()
     parser.add_argument('--smoke-test', action='store_true')
     parser.add_argument('--browser', action='store_true')
@@ -29,7 +35,7 @@ def main():
         listener.bind(('127.0.0.1', 8768))
     except OSError:
         message = 'CUA LAB is already running, or port 8768 is occupied.'
-        if os.name == 'nt':
+        if os.name == 'nt' and not args.smoke_test:
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0)
         else:
@@ -40,7 +46,7 @@ def main():
     from cua_lab.server import create_app
     token = secrets.token_urlsafe(32)
     app = create_app(token=token)
-    server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=8768, log_level='warning', access_log=False, timeout_graceful_shutdown=5, loop='asyncio'))
+    server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=8768, log_level='warning', log_config=None, access_log=False, timeout_graceful_shutdown=5, loop='asyncio'))
     thread = threading.Thread(target=lambda: server.run(sockets=[listener]), name='cua-backend', daemon=True)
     thread.start()
     try:
@@ -82,7 +88,8 @@ if __name__ == '__main__':
         sys.exit(main())
     except Exception as exc:
         message = 'CUA LAB startup failed: '+type(exc).__name__+'. Check WebView2, dependencies and port 8768.'
-        if os.name == 'nt':
+        # Never block an unattended smoke test on a modal dialog.
+        if os.name == 'nt' and '--smoke-test' not in sys.argv:
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0x10)
         else:

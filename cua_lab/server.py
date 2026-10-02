@@ -1,6 +1,7 @@
 import asyncio
 import hmac
 import json
+import os
 import platform
 import secrets
 from contextlib import asynccontextmanager
@@ -12,7 +13,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from . import __version__
 from .driver import CuaDriverController,machine_profile,DriverError
-from .provider import OpenRouterProvider
+from .provider import make_provider,find_llama_server
+from . import settings as provider_settings
+from .settings import ProviderSettings
 from .runtime import Runtime
 from .store import Store
 from .learning import LearningBank,Learning
@@ -33,7 +36,8 @@ class ApprovalInput(BaseModel):
 def create_app(root=None,token=None,driver=None,provider=None):
     resource_root=Path(__file__).resolve().parent.parent
     store=Store(root);driver=driver or CuaDriverController(store.root)
-    provider=provider or OpenRouterProvider(store.root)
+    current_settings=provider_settings.load(store)
+    provider=provider or make_provider(store.root,current_settings)
     bank=LearningBank(store,resource_root);runtime=Runtime(store,driver,provider,bank)
     token=token or secrets.token_urlsafe(32)
     profile=machine_profile()
@@ -44,10 +48,10 @@ def create_app(root=None,token=None,driver=None,provider=None):
         yield
         if runtime.worker and not runtime.worker.done():
             await runtime.stop();await asyncio.gather(runtime.worker,return_exceptions=True)
-        await driver.close();await provider.close();store.close()
+        await driver.close();await runtime.provider.close();store.close()
 
     app=FastAPI(title='CUA LAB',version=__version__,lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
-    app.state.runtime=runtime;app.state.token=token;app.state.store=store
+    app.state.runtime=runtime;app.state.token=token;app.state.store=store;app.state.settings=current_settings
     origins={'http://127.0.0.1:8768','http://localhost:8768'}
 
     @app.middleware('http')
@@ -75,18 +79,35 @@ def create_app(root=None,token=None,driver=None,provider=None):
     async def health():return {'application':'CUA LAB','version':__version__,'backend':'ready'}
 
     @app.get('/api/status')
-    async def status():return {'version':__version__,'machine':profile,'runtime':runtime.snapshot(),'auto_sync':runtime.auto_sync,'model':provider.model}
+    async def status():return {'version':__version__,'machine':profile,'runtime':runtime.snapshot(),'auto_sync':runtime.auto_sync,'model':runtime.provider.model,'provider':runtime.provider.info()}
+
+    def provider_view():
+        s=app.state.settings
+        return {'settings':s.model_dump(),'active':runtime.provider.info(),'llama_server':find_llama_server(s.llama_server_path),
+                'keys':{k:bool(os.getenv(k,'').strip()) for k in provider_settings.KEY_ENVS}}
+
+    @app.get('/api/provider')
+    async def get_provider():return provider_view()
+
+    @app.post('/api/provider')
+    async def set_provider(body:ProviderSettings):
+        if runtime.worker and not runtime.worker.done():raise ValueError('Stop the active task before changing model')
+        new=make_provider(store.root,body)
+        old=runtime.provider;runtime.provider=new;app.state.settings=body
+        provider_settings.save(store,body)
+        await old.close()
+        return provider_view()
 
     @app.post('/api/diagnostics')
     async def diagnostics():
-        remote=await provider.health()
+        remote={**await runtime.provider.health(),'provider':runtime.provider.name,'label':runtime.provider.label}
         driver_status={'ready':False,'detail':'Not checked while agent owns desktop'}
         if not runtime.worker or runtime.worker.done():
             try:
                 observation=await driver.observe('health',fresh=True)
                 driver_status={'ready':True,'version':driver.version,'desktop':bool(observation.get('windows')),'uia':bool(observation.get('window',{}).get('elements')),'detail':'Real window discovery completed'}
             except (DriverError,TimeoutError) as exc:driver_status={'ready':False,'detail':str(exc)}
-        return {'openrouter':remote,'driver':driver_status,'database':'ready','knowledge_records':len(bank.shared)}
+        return {'provider':remote,'openrouter':remote,'driver':driver_status,'database':'ready','knowledge_records':len(bank.shared)}
 
     @app.post('/api/tasks')
     async def start(body:TaskInput):return {'session':await runtime.start(**body.model_dump())}

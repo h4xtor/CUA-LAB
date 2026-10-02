@@ -37,7 +37,7 @@ class MCPTransport:
         flags = 0x08000000 if os.name == 'nt' else 0
         env = os.environ.copy()
         # The driver does not need model or GitHub credentials.
-        for key in ('OPENROUTER_API_KEY','CUA_LAB_GITHUB_TOKEN'):
+        for key in ('OPENROUTER_API_KEY','CUA_LAB_API_KEY','OPENAI_API_KEY','CUA_LAB_GITHUB_TOKEN'):
             env.pop(key, None)
         self.process = await asyncio.create_subprocess_exec(*self.command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, limit=32*1024*1024, creationflags=flags, env=env)
         self.reader = asyncio.create_task(self._read())
