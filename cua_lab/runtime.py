@@ -34,13 +34,14 @@ class Runtime:
         if not objective.strip() or len(objective)>8000:raise ValueError('Task must contain 1..8000 characters')
         if mode not in ('auto','step'):raise ValueError('Unknown mode')
         if not 1<=max_steps<=100:raise ValueError('max_steps must be 1..100')
+        if vision and not getattr(self.provider,'supports_vision',True):raise ValueError('The selected local model has no vision projector (mmproj); disable screenshots or add an mmproj file in Settings')
         self.sid=uuid.uuid4().hex;self.step=0;self.pending=None;self.epoch+=1
         self.mode=mode;self.vision=vision;self.max_steps=max_steps;self.objective=objective
         self.read_only=read_only or bool(re.search(r'(?i)do not (click|modify|change)|read.only|kun (observer|læs)|ikke (klikke|ændre)',objective))
         self.status='running';self.resume_gate.set();self.recent=[];self.started=time.time()
         self.metrics={'requests':0,'input_tokens':0,'output_tokens':0,'cost':0,'cost_known':True,'failures':0,'actions':0,'retries':0}
         self.driver.invalidate()
-        self.store.create(self.sid,objective,{'version':__version__,'model':self.provider.model,'mode':mode,'read_only':self.read_only,'vision':vision})
+        self.store.create(self.sid,objective,{'version':__version__,'provider':getattr(self.provider,'name','unknown'),'model':self.provider.model,'mode':mode,'read_only':self.read_only,'vision':vision})
         self.emit('session_started',self.snapshot())
         self.worker=asyncio.create_task(self._run(),name='cua-task-'+self.sid)
         return self.sid
