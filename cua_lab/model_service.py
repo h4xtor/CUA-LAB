@@ -34,6 +34,8 @@ class ModelService:
     async def health(self): return await self.current.health()
 
     async def save(self, settings, api_key=None, clear_key=False):
+        if isinstance(self.current,GGUFProvider) and self.current._active and not self.current._active.done():
+            raise ValueError('Previous built-in GGUF inference is still finishing; wait before changing models')
         if settings.provider=='gguf':
             path=Path(settings.gguf_path)
             if not settings.gguf_path or not path.is_absolute() or not path.is_file():

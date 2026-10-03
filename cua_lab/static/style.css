@@ -20,7 +20,7 @@
 #task-form{display:flex;flex-direction:column;gap:8px;margin-top:20px}
 #task-form textarea{width:100%;min-height:110px;resize:vertical;flex:none}
 #task-form .primary{align-self:stretch}
-.task .controls{margin:14px 0 8px}
+.task .controls{position:sticky;top:0;z-index:2;margin:0;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--border)}
 .task .controls label{margin-left:0}
 .task .privacy{line-height:1.45}
 .task-details{border-top:1px solid var(--border);padding:12px 20px 18px}

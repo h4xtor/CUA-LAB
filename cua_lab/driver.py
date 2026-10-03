@@ -208,9 +208,15 @@ class CuaDriverController:
                 matches=[w for w in self.windows if w.get('pid') and w.get('window_id')
                          and any(term in (str(w.get('title',''))+' '+str(w.get('app_name',''))).lower()
                                  for term in names.get(self.preferred_app,()))]
-                if len(matches)==1:
-                    self.target={'pid':matches[0]['pid'],'window_id':matches[0]['window_id']}
-            if self.target is None and active:
+                if matches:
+                    # UWP exposes both host and app windows. Use the active
+                    # match or the first visible host in the driver's ordering.
+                    chosen=next((w for w in matches if active and w['window_id']==active['window_id']),None)
+                    chosen=chosen or matches[0]
+                    self.target={'pid':chosen['pid'],'window_id':chosen['window_id']}
+            # A named application's absence calls for discovery/launch, not a
+            # capture of the user's unrelated foreground window.
+            if self.target is None and active and not self.preferred_app:
                 self.target=next(({'pid':w['pid'],'window_id':w['window_id']} for w in self.windows if w.get('window_id')==active['window_id'] and w.get('pid')),None)
             state={}; image=None; uia_ms=0; shot_ms=0
             if self.target:
@@ -281,7 +287,7 @@ class CuaDriverController:
 
 def state_fingerprint(obs):
     state=json.loads(json.dumps(obs.get('window',{})))
-    for key in ('snapshot_id','screenshot_file_path'):
+    for key in ('snapshot_id','screenshot_file_path','invalidated_snapshot_ids','walk_elapsed_ms','timeout_ms'):
         state.pop(key,None)
     if state.get('elements') is not None:
         state.pop('tree_markdown',None)

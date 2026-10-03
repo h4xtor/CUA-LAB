@@ -52,3 +52,46 @@ def test_snapshot_tokens_do_not_look_like_desktop_changes():
     before={'window':{'snapshot_id':'s1','elements':[{'element_token':'s1:1','label':'equals'}],'tree_markdown':'s1'}}
     after={'window':{'snapshot_id':'s2','elements':[{'element_token':'s2:1','label':'equals'}],'tree_markdown':'s2'}}
     assert state_fingerprint(before)==state_fingerprint(after)
+
+
+def test_driver_bookkeeping_changes_do_not_invalidate_real_actions():
+    before={'window':{'pid':1,'window_id':2,'invalidated_snapshot_ids':['old1'],
+                     'walk_elapsed_ms':1,'timeout_ms':200,'elements':[{'label':'One','element_token':'s1:1'}]}}
+    after={'window':{**before['window'],'invalidated_snapshot_ids':['old2'],
+                    'walk_elapsed_ms':3,'timeout_ms':400,'elements':[{'label':'One','element_token':'s2:1'}]}}
+    assert state_fingerprint(before)==state_fingerprint(after)
+    after['window']['elements'][0]['label']='Two'
+    assert state_fingerprint(before)!=state_fingerprint(after)
+
+
+async def test_missing_requested_app_does_not_capture_unrelated_foreground(tmp_path,monkeypatch):
+    from cua_lab.driver import CuaDriverController
+    import cua_lab.driver as module
+    driver=CuaDriverController(tmp_path)
+    driver.preferred_app='Calculator'
+    async def connect():pass
+    async def call(name,args):
+        assert name=='list_windows'
+        return {'windows':[{'pid':9,'window_id':90,'title':'Other app'}]}, {}, 1
+    driver.connect=connect;driver.call=call
+    monkeypatch.setattr(module,'active_window',lambda:{'pid':9,'window_id':90})
+    obs=await driver.observe('fixture')
+    assert obs['window']=={} and obs['screenshot'] is None
+    assert obs['windows'][0]['pid']==9
+
+
+async def test_uwp_host_and_app_windows_choose_visible_host(tmp_path,monkeypatch):
+    from cua_lab.driver import CuaDriverController
+    import cua_lab.driver as module
+    driver=CuaDriverController(tmp_path);driver.preferred_app='Calculator'
+    async def connect():pass
+    async def call(name,args):
+        if name=='list_windows':
+            return {'windows':[{'pid':1,'window_id':2,'title':'Lommeregner','app_name':'ApplicationFrameHost.exe'},
+                               {'pid':3,'window_id':4,'title':'Lommeregner','app_name':'CalculatorApp.exe'}]}, {}, 1
+        assert args['pid']==1 and args['window_id']==2
+        return {'elements':[]}, {'content':[]}, 1
+    driver.connect=connect;driver.call=call
+    monkeypatch.setattr(module,'active_window',lambda:{'pid':9,'window_id':90})
+    await driver.observe('fixture')
+    assert driver.target=={'pid':1,'window_id':2}

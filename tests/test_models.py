@@ -29,9 +29,18 @@ def test_saved_key_is_encrypted_and_never_returned(tmp_path):
 
 
 async def test_paid_route_requires_saved_permission(tmp_path):
-    provider=OpenRouterProvider(tmp_path,model='paid/model',api_key='fixture',allow_paid=False)
+    provider=OpenRouterProvider(tmp_path,model='paid/model',api_key='fixture')
     with pytest.raises(ProviderError,match='credit use'):
         await provider.verify({})
+    await provider.close()
+
+
+async def test_builtin_vision_requires_projector_before_inference(tmp_path):
+    from cua_lab.provider import GGUFProvider
+    provider=GGUFProvider(tmp_path,ProviderSettings(provider='gguf'))
+    with pytest.raises(ProviderError,match='requires a compatible mmproj'):
+        await provider.verify({},image='fixture/screenshots/image.png')
+    assert provider._active is None
     await provider.close()
 
 
@@ -159,3 +168,36 @@ async def test_builtin_gguf_structured_verification_uses_local_engine(tmp_path, 
     decision,usage=await provider.verify({'expected_result':'437'})
     assert decision.satisfied and usage['cost']==0 and usage['input_tokens']==13
     await provider.close()
+
+
+async def test_builtin_stop_signals_native_generation_and_blocks_model_switch(tmp_path,monkeypatch):
+    import asyncio
+    import threading
+    import time
+    from cua_lab.model_service import ModelService
+    service=ModelService(tmp_path)
+    fixture=tmp_path/'fixture.gguf';fixture.write_bytes(b'GGUF')
+    await service.save(ProviderSettings(provider='gguf',gguf_path=str(fixture)))
+    provider=service.current
+    entered=threading.Event()
+    class Engine:
+        def create_chat_completion(self,**kwargs):
+            entered.set()
+            while not kwargs['stopping_criteria']([],[]):time.sleep(.01)
+            return {'choices':[{'message':{'content':'{}'}}]}
+    monkeypatch.setattr(provider,'_load',lambda:Engine())
+    pending=asyncio.create_task(provider.verify({}))
+    try:
+        async with asyncio.timeout(3):
+            while not entered.is_set():await asyncio.sleep(.01)
+        with pytest.raises(ValueError,match='still finishing'):
+            await service.save(ProviderSettings(model='openrouter/free'))
+        assert service.config.settings.provider=='gguf'
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):await pending
+        with pytest.raises(ProviderError,match='cancelled'):
+            await asyncio.wait_for(provider._active,3)
+        assert provider._cancel.is_set()
+    finally:
+        provider._cancel.set()
+        await service.close()

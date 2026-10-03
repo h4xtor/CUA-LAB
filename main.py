@@ -38,6 +38,7 @@ def report_startup_failure(exc, interactive=True):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--smoke-test', action='store_true')
+    parser.add_argument('--native-smoke-test', action='store_true')
     parser.add_argument('--browser', action='store_true')
     args = parser.parse_args()
     if os.name == 'nt':
@@ -103,7 +104,25 @@ def main():
         else:
             import webview
             webview.create_window('CUA LAB', url, width=1440, height=1000, min_size=(900, 700), background_color='#0c1016', js_api=NativeDialogs())
-            webview.start(gui='edgechromium', private_mode=True)
+            native_errors=[]
+            def native_smoke():
+                try:
+                    deadline=time.monotonic()+30
+                    while time.monotonic()<deadline:
+                        if webview.windows[0].evaluate_js("document.getElementById('connection')?.textContent === 'LIVE' && document.getElementById('state')?.textContent === 'IDLE'"):
+                            import json
+                            (app.state.store.root/'native-smoke-test.json').write_text(json.dumps({
+                                'status':'passed','checks':['native_webview2','javascript','authenticated_websocket','idle_runtime'],
+                            }),encoding='utf-8')
+                            return
+                        time.sleep(.1)
+                    raise RuntimeError('Native WebView2 did not reach authenticated idle state')
+                except Exception as exc:
+                    native_errors.append(exc)
+                finally:
+                    webview.windows[0].destroy()
+            webview.start(func=native_smoke if args.native_smoke_test else None, gui='edgechromium', private_mode=True)
+            if native_errors:raise native_errors[0]
     except KeyboardInterrupt:
         pass
     finally:

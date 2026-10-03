@@ -6,7 +6,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -160,7 +160,7 @@ def create_app(root=None,token=None,driver=None,provider=None):
     async def sessions():return store.sessions()
 
     @app.get('/api/sessions/{sid}')
-    async def session(sid:str):return store.events(sid)
+    async def session(sid:str,after:int=Query(default=0,ge=0)):return store.events(sid,after)
 
     @app.get('/api/images/{sid}/{name}')
     async def screenshot(sid:str,name:str):

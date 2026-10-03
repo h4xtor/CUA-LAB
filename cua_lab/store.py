@@ -45,8 +45,8 @@ class Store:
     def sessions(self):
         return [dict(r) for r in self.db.execute('SELECT * FROM sessions ORDER BY started DESC LIMIT 100')]
 
-    def events(self, sid):
-        return [{**dict(r), 'data': json.loads(r['data'])} for r in self.db.execute('SELECT * FROM events WHERE session=? ORDER BY id', (sid,))]
+    def events(self, sid, after=0):
+        return [{**dict(r), 'data': json.loads(r['data'])} for r in self.db.execute('SELECT * FROM events WHERE session=? AND id>? ORDER BY id', (sid,after))]
 
     def save_learning(self, record, synced=False):
         self.db.execute('INSERT INTO learnings VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,synced=excluded.synced', (record.id,record.model_dump_json(),int(synced)))

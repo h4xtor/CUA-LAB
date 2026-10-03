@@ -18,6 +18,8 @@ def test_real_browser_layout_health_and_failed_task(tmp_path, monkeypatch):
     provider=ModelService(tmp_path)
     async def installed_models(settings):return [{'id':'qwen2.5vl:7b'},{'id':'gemma3:4b'}]
     provider.local.models=installed_models
+    async def installed_metadata(settings):return {'capabilities':['completion','vision']}
+    provider.local.check_model=installed_metadata
     app=create_app(tmp_path,token='browser-test-token',driver=UnavailableDriver(tmp_path),provider=provider)
     server=uvicorn.Server(uvicorn.Config(app,host='127.0.0.1',port=8768,log_level='error',access_log=False))
     thread=threading.Thread(target=server.run,daemon=True);thread.start()
@@ -66,6 +68,23 @@ def test_real_browser_layout_health_and_failed_task(tmp_path, monkeypatch):
             page.locator('#sessions button').first.click()
             expect(page.locator('#replay .event').first).to_be_visible()
             page.locator('[data-tab=workspace]').click()
+            # Reopening the UI restores all durable events, including those
+            # missed while disconnected. Scrolling back must stay possible.
+            sid=app.state.runtime.sid
+            for i in range(300):
+                app.state.store.event(sid,i,'audit_event',{'message':f'Persistent event {i}'})
+            total=len(app.state.store.events(sid))
+            page.reload()
+            expect(page.locator('#events .event')).to_have_count(total)
+            expect(page.locator('#events')).to_contain_text('Persistent event 0')
+            expect(page.locator('#events')).to_contain_text('Persistent event 299')
+            for width,height in ((900,700),(1024,768),(1280,720),(1440,900)):
+                page.set_viewport_size({'width':width,'height':height})
+                assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                stop=page.locator('[data-control=stop]').bounding_box()
+                assert 0<=stop['y'] and stop['y']+stop['height']<=height
+            page.locator('[data-control=stop]').focus()
+            expect(page.locator('[data-control=stop]')).to_be_focused()
             page.screenshot(path=str(tmp_path/'cua-lab-ui.png'),full_page=True)
             page.set_viewport_size({'width':760,'height':1000})
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')

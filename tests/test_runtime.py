@@ -61,3 +61,15 @@ async def test_pause_invalidates_pending_approval(tmp_path):
     with pytest.raises(ValueError):r.resolve(old,'execute')
     assert d.actions==[]
     await r.stop();await until(lambda:r.worker.done())
+
+
+@pytest.mark.parametrize('choice',['stop','reject'])
+async def test_stop_or_reject_before_admission_never_executes(tmp_path,choice):
+    r,d,p=setup(tmp_path)
+    await r.start('test',mode='step');await until(lambda:r.pending is not None)
+    old=r.pending['id']
+    if choice=='stop':await r.stop()
+    else:r.resolve(old,'reject')
+    await r.worker
+    assert d.actions==[] and r.status==('stopped' if choice=='stop' else 'blocked')
+    with pytest.raises(ValueError):r.resolve(old,'execute')

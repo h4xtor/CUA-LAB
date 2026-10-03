@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Protocol
@@ -17,6 +18,7 @@ Use launch_app only for supported applications. Never execute shell commands, sc
 If a requested supported application is not the observed window, first use launch_app or inspect its exact pid/window_id from windows using get_window_state. A different foreground window is not a reason to stop. To open Calculator, use launch_app with name Calculator.
 The observation.window is an inspected window that can receive exact background actions even when observation.active_window is different. "Lommeregner" is Calculator. Never ask the user to foreground Calculator when its inspected UIA buttons are available.
 Plan ONE action. Verify results from observed UI, not from a successful tool return. Report completed only when evidence in current observation proves the objective; Calculator result must be read from Calculator, never merely computed internally.
+When an action is needed, use status continue or needs_approval and supply one action. For completed, blocked or failed, action MUST be null. Keep messages short.
 Evidence must quote an actual UI value/text. In readonly mode no mutations. If no supported path works, return blocked.
 Explain briefly for the user, never provide hidden chain of thought. Do not invent tool results or memory.
 If UIA is degraded and no visual image is supplied, request the user enable vision or return blocked. A title alone does not prove a web page loaded.
@@ -33,6 +35,13 @@ class StructuredProvider:
     async def decide(self, context, schemas, image=None):
         schema=Decision.model_json_schema()
         schema['$defs']['Action']={'anyOf':[{'type':'object','properties':{'tool':{'const':name},'arguments':args},'required':['tool','arguments'],'additionalProperties':False} for name,args in schemas.items()]}
+        definitions=schema.pop('$defs')
+        # Encode the same invariant enforced by Decision in the generation
+        # grammar, rather than spending retries on terminal states with actions.
+        schema={'$defs':definitions,'anyOf':[
+            {**schema,'properties':{**schema['properties'],'status':{'enum':statuses},'action':action}}
+            for statuses,action in ((['continue','needs_approval'],{'$ref':'#/$defs/Action'}),
+                                    (['completed','blocked','failed'],{'type':'null'}))]}
         result,usage=await self._request({**context,'available_tools':schemas},schema,image)
         return Decision.model_validate(result),usage
 
@@ -47,7 +56,7 @@ class StructuredProvider:
 class OpenRouterProvider(StructuredProvider):
     label='OpenRouter'
 
-    def __init__(self, root, client=None, model=None, api_key=None, allow_paid=True):
+    def __init__(self, root, client=None, model=None, api_key=None, allow_paid=False):
         self.root=Path(root)
         self.model=model or os.getenv('CUA_LAB_MODEL','qwen/qwen3.7-flash')
         self.api_key=api_key
@@ -122,6 +131,7 @@ class GGUFProvider(StructuredProvider):
         self._llm=None
         self._lock=asyncio.Lock()
         self._active=None
+        self._cancel=threading.Event()
         self.requests=0
         self.input_tokens=0;self.output_tokens=0;self.cost=0.0;self.cost_known=True
         self.retries=0
@@ -152,7 +162,7 @@ class GGUFProvider(StructuredProvider):
         if self.settings.gguf_mmproj:
             architecture=str(llm.metadata.get('general.architecture','')).lower()
             try:
-                if architecture in ('qwen2vl','qwen2.5vl'):
+                if architecture in ('qwen2vl','qwen2.5vl','qwen25vl'):
                     from llama_cpp.llama_chat_format import Qwen25VLChatHandler
                     llm.chat_handler=Qwen25VLChatHandler(clip_model_path=self.settings.gguf_mmproj,verbose=False)
                 elif architecture=='llava':
@@ -169,6 +179,8 @@ class GGUFProvider(StructuredProvider):
         text=json.dumps(redact(context),ensure_ascii=False)
         if not image:
             return [{'role':'system','content':SYSTEM},{'role':'user','content':text}]
+        if not self.settings.gguf_mmproj:
+            raise ProviderError('Built-in vision requires a compatible mmproj file; disable screenshots or select a projector')
         path=(self.root/'sessions'/image).resolve()
         if not path.is_relative_to((self.root/'sessions').resolve()):
             raise ProviderError('Invalid screenshot path')
@@ -177,11 +189,14 @@ class GGUFProvider(StructuredProvider):
         return [{'role':'system','content':SYSTEM},{'role':'user','content':[{'type':'text','text':text},{'type':'image_url','image_url':{'url':data_url}}]}]
 
     def _complete(self, schema, messages):
-        from llama_cpp import LlamaGrammar
+        from llama_cpp import LlamaGrammar, StoppingCriteriaList
         llm=self._load()
+        if self._cancel.is_set():raise ProviderError('Built-in GGUF inference cancelled')
         grammar=LlamaGrammar.from_json_schema(json.dumps(schema))
         started=time.perf_counter()
-        result=llm.create_chat_completion(messages=messages,grammar=grammar,max_tokens=1800,temperature=0)
+        result=llm.create_chat_completion(messages=messages,grammar=grammar,max_tokens=1800,temperature=0,
+            stopping_criteria=StoppingCriteriaList([lambda tokens,logits:self._cancel.is_set()]))
+        if self._cancel.is_set():raise ProviderError('Built-in GGUF inference cancelled')
         text=result['choices'][0]['message']['content']
         usage=result.get('usage',{})
         metric={'model':self.model,'input_tokens':usage.get('prompt_tokens',0),'output_tokens':usage.get('completion_tokens',0),'cost':0.0,'retries':0,'model_ms':round((time.perf_counter()-started)*1000,1)}
@@ -194,16 +209,23 @@ class GGUFProvider(StructuredProvider):
         async with self._lock:  # llama.cpp handles one generation stream at a time
             if self._active and not self._active.done():
                 raise ProviderError('Previous local GGUF inference is still finishing; wait before sending another task')
+            self._cancel.clear()
             self._active=asyncio.create_task(asyncio.to_thread(
                 self._complete,schema,self._messages(LocalProvider._compact_context(context),image)))
+            self._active.add_done_callback(lambda task:task.exception() if not task.cancelled() else None)
             try:
                 result,metric=await asyncio.wait_for(asyncio.shield(self._active),timeout=180)
+            except asyncio.CancelledError:
+                self._cancel.set()
+                raise
             except TimeoutError as exc:
+                self._cancel.set()
                 raise ProviderError('Built-in GGUF inference exceeded the 180-second deadline') from exc
         self.requests+=1;self.input_tokens+=metric['input_tokens'];self.output_tokens+=metric['output_tokens']
         return result,metric
 
     async def close(self):
+        self._cancel.set()
         self._llm=None  # release for GC; llama-cpp frees native memory on __del__
 
 
@@ -296,9 +318,14 @@ class LocalProvider(StructuredProvider):
             result['available_tools']={name:schema_shape(shape) for name,shape in result['available_tools'].items()}
         observation=result.get('observation')
         if isinstance(observation,dict):
+            if isinstance(observation.get('windows'),list):
+                observation['windows']=[{k:v for k,v in window.items() if k in ('pid','window_id','app_name','title')}
+                                        for window in observation['windows']]
             window=observation.get('window')
-            if isinstance(window,dict) and window.get('elements') is not None:
-                window.pop('tree_markdown',None)
+            if isinstance(window,dict):
+                if window.get('elements') is not None:window.pop('tree_markdown',None)
+                for key in ('_note','invalidated_snapshot_ids','walk_elapsed_ms','timeout_ms','snapshot_id'):
+                    window.pop(key,None)
             observation.pop('latency',None)
             observation.pop('screenshot',None)
         return result
