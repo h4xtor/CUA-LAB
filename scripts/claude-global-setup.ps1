@@ -9,7 +9,8 @@ Run claude plugin install ponytail@ponytail --scope user
 Run claude plugin marketplace add permanu/superskill
 Run claude plugin install superskill@superskill --scope user
 
-Run npx -y skills add addyosmani/agent-skills --agent claude-code -g -y
+# npx.cmd, not npx: the npx.ps1 shim breaks when called through Run.
+Run npx.cmd -y skills add addyosmani/agent-skills --agent claude-code -g -y
 
 Run py -m pip install --quiet --disable-pip-version-check graphifyy
 Run py -m graphify install --platform claude
