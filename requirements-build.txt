@@ -11,3 +11,11 @@ pytest-asyncio==0.26.0
 iniconfig==2.1.0
 pluggy==1.5.0
 colorama==0.4.6
+# The built-in local model engine (Models tab -> "Built in"). PyPI has no prebuilt
+# Windows wheel for this package, so a plain `pip install` builds from source — and
+# that source tree has paths longer than Windows allows, failing on a deeply nested
+# .svelte file. This is the project's own prebuilt-wheel server; it skips that entirely.
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+llama-cpp-python==0.3.35
+# PyInstaller 6.13.0 omits a required NumPy 2.5 module on Windows.
+numpy==1.26.4

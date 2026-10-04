@@ -35,6 +35,14 @@ def setup(tmp_path):
     runtime=Runtime(store,driver,provider,LearningBank(store,Path(tmp_path)))
     return runtime,driver,provider
 
+
+async def test_desktop_cleanup_plan_is_readonly_and_never_dispatches_input(tmp_path):
+    r,d,p=setup(tmp_path);d.preferred_app=None
+    await r.start('Vis mig skrivebordet og lav en oprydningsplan')
+    await r.worker
+    assert d.preferred_app=='Desktop' and r.read_only
+    assert d.actions==[] and r.status=='blocked'
+
 async def test_stop_cancels_model_and_all_future_actions(tmp_path):
     r,d,p=setup(tmp_path);p.hold=True
     await r.start('test',mode='auto')
@@ -61,3 +69,15 @@ async def test_pause_invalidates_pending_approval(tmp_path):
     with pytest.raises(ValueError):r.resolve(old,'execute')
     assert d.actions==[]
     await r.stop();await until(lambda:r.worker.done())
+
+
+@pytest.mark.parametrize('choice',['stop','reject'])
+async def test_stop_or_reject_before_admission_never_executes(tmp_path,choice):
+    r,d,p=setup(tmp_path)
+    await r.start('test',mode='step');await until(lambda:r.pending is not None)
+    old=r.pending['id']
+    if choice=='stop':await r.stop()
+    else:r.resolve(old,'reject')
+    await r.worker
+    assert d.actions==[] and r.status==('stopped' if choice=='stop' else 'blocked')
+    with pytest.raises(ValueError):r.resolve(old,'execute')

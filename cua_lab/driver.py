@@ -125,6 +125,18 @@ def active_window():
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
     return {'pid':pid.value,'window_id':int(hwnd or 0)}
 
+def desktop_window():
+    """Inspect the shell's desktop in the background, never our foreground UI."""
+    if os.name!='nt':return None
+    from ctypes import wintypes
+    user32=ctypes.WinDLL('user32',use_last_error=True)
+    user32.GetShellWindow.restype=wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+    hwnd=user32.GetShellWindow();pid=wintypes.DWORD()
+    if not hwnd:return None
+    user32.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
+    return {'pid':pid.value,'window_id':int(hwnd)} if pid.value else None
+
 def machine_profile():
     result = {'hostname':platform.node(),'os':platform.platform(),'monitors':[]}
     if os.name == 'nt':
@@ -154,6 +166,7 @@ class CuaDriverController:
         self.version = None
         self.last_observation = {}
         self.lock = asyncio.Lock()
+        self.preferred_app = None
 
     def invalidate(self):
         self.target = None
@@ -202,8 +215,30 @@ class CuaDriverController:
                 data,_,_=await self.call('list_windows',{})
                 self.windows=data.get('windows',[])
             active=active_window()
-            if self.target is None and active:
-                self.target=next(({'pid':w['pid'],'window_id':w['window_id']} for w in self.windows if w.get('window_id')==active['window_id'] and w.get('pid')),None)
+            if self.preferred_app=='Desktop' or active and active.get('pid')==os.getpid():
+                self.windows=[w for w in self.windows if w.get('pid')!=os.getpid()]
+            if self.target is None and self.preferred_app=='Desktop':
+                self.target=desktop_window()
+                if not self.target:raise DriverError('Windows desktop is unavailable; check that Explorer is running')
+            if self.target is None and self.preferred_app:
+                names={'Calculator':('calculator','lommeregner'),'Chrome':('chrome',),'Microsoft Edge':('microsoft edge','msedge')}
+                matches=[w for w in self.windows if w.get('pid') and w.get('window_id')
+                         and any(term in (str(w.get('title',''))+' '+str(w.get('app_name',''))).lower()
+                                 for term in names.get(self.preferred_app,()))]
+                if matches:
+                    # UWP exposes both host and app windows. Use the active
+                    # match or the first visible host in the driver's ordering.
+                    chosen=next((w for w in matches if active and w['window_id']==active['window_id']),None)
+                    chosen=chosen or matches[0]
+                    self.target={'pid':chosen['pid'],'window_id':chosen['window_id']}
+            # A named application's absence calls for discovery/launch, not a
+            # capture of the user's unrelated foreground window.
+            if self.target is None and active and not self.preferred_app:
+                if active.get('pid')==os.getpid():
+                    self.target=desktop_window()
+                    if not self.target:raise DriverError('Windows desktop is unavailable; check that Explorer is running')
+                else:
+                    self.target=next(({'pid':w['pid'],'window_id':w['window_id']} for w in self.windows if w.get('window_id')==active['window_id'] and w.get('pid')),None)
             state={}; image=None; uia_ms=0; shot_ms=0
             if self.target:
                 args={**self.target,'include_screenshot':False,'include_accessibility_tree':True,'max_elements':100,'max_depth':8}
@@ -219,7 +254,7 @@ class CuaDriverController:
                     state={k:v for k,v in state.items() if k in ('pid','window_id','app_name','window_title')}
                     state['sensitive_interface']='password or credential field detected; use Take Control'
             obs={'active_window':active,'windows':self.windows,'window':state,'screenshot':image,'screenshot_withheld':sensitive_state(state),'latency':{'uia_ms':uia_ms,'screenshot_ms':shot_ms,'observation_ms':round((time.perf_counter()-started)*1000,1)}}
-            if not self.windows:
+            if not self.windows and not self.target:
                 raise DriverError('No Windows windows detected; check interactive desktop and cua-driver doctor')
             self.last_observation=obs
             return obs
@@ -256,8 +291,15 @@ class CuaDriverController:
             data,_,ms=await self.call(tool,wire_args)
             if tool in ('list_windows','launch_app','get_desktop_state'):
                 self.windows=[]
+                if tool=='get_desktop_state':
+                    self.target=None;self.preferred_app='Desktop'
                 if tool=='launch_app':
                     self.target=None
+                    # Background launches deliberately preserve the foreground app.
+                    # Observe the returned window, rather than the user's foreground.
+                    windows=data.get('windows',[])
+                    if len(windows)==1 and data.get('pid') and windows[0].get('window_id'):
+                        self.target={'pid':data['pid'],'window_id':windows[0]['window_id']}
             return {'result':redact(data),'execution_ms':ms}
 
     async def close(self):
@@ -266,12 +308,16 @@ class CuaDriverController:
         self.transport=None
         self.invalidate()
 
-def state_fingerprint(obs):
+def state_fingerprint(obs, action=None):
     state=json.loads(json.dumps(obs.get('window',{})))
-    for key in ('snapshot_id','screenshot_file_path'):
+    for key in ('snapshot_id','screenshot_file_path','invalidated_snapshot_ids','walk_elapsed_ms','timeout_ms'):
         state.pop(key,None)
     if state.get('elements') is not None:
         state.pop('tree_markdown',None)
     for element in state.get('elements',[]) or []:
         element.pop('element_token',None)
-    return hashlib.sha256(json.dumps({'window':state,'active':obs.get('active_window'),'windows':obs.get('windows')},sort_keys=True).encode()).hexdigest()
+    args=(action or {}).get('arguments',{})
+    target=args.get('target',args)
+    exact=all(target.get(k) is not None and target[k]==state.get(k) for k in ('pid','window_id'))
+    payload={'window':state} if exact else {'window':state,'active':obs.get('active_window'),'windows':obs.get('windows')}
+    return hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()

@@ -24,6 +24,11 @@ def classify(action, observation, read_only=False):
     app = str(state.get('app_name', '')) + ' ' + str(state.get('window_title', ''))
     target = args.get('target', args)
     exact = target.get('pid') == state.get('pid') and target.get('window_id') == state.get('window_id') and state.get('pid') is not None
+    if args.get('element_token') and not any(k in args for k in ('target','pid','window_id')):
+        # A current UIA token already binds the inspected window in the driver.
+        # Explicit conflicting targets never qualify for this implicit form.
+        exact=state.get('pid') is not None and any(e.get('element_token')==args['element_token']
+                                                  for e in state.get('elements',[]))
     if tool == 'launch_app' and args.get('name') in ('Calculator', 'Chrome', 'Microsoft Edge'):
         return None
     if exact and CALC.search(app):
@@ -35,7 +40,7 @@ def classify(action, observation, read_only=False):
             element = next((e for e in state.get('elements', []) if e.get('element_token') == args['element_token']), None)
             if element and not RISK.search(json.dumps(element)):
                 label = str(element.get('label', '')).lower()
-                if re.fullmatch(r'[0-9 .+*/=()\-]+', label) or label in {'one','two','three','four','five','six','seven','eight','nine','zero','equals','multiply by','plus','minus','divide by','clear','clear entry','et','en','to','tre','fire','fem','seks','syv','otte','ni','nul','lig med','gang med','ryd'}:
+                if re.fullmatch(r'[0-9 .+*/=()\-]+', label) or label in {'one','two','three','four','five','six','seven','eight','nine','zero','equals','multiply by','plus','minus','divide by','clear','clear entry','et','en','to','tre','fire','fem','seks','syv','otte','ni','nul','lig med','er lig med','gang med','multiplicer med','divider med','ryd','ryd post'}:
                     return None
     if exact and re.search(r'(?i)chrome|edge|chromium', app):
         if tool == 'hotkey' and [k.lower() for k in args.get('keys', [])] in (['ctrl','l'], ['control','l']):

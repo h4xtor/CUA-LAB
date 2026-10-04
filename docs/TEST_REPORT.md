@@ -1,5 +1,8 @@
 # Test report — 2026-09-21
 
+Latest Windows build and desktop evidence: [2026-09-22 verification](WINDOWS_VERIFICATION.md).
+The historical Linux results below are retained separately.
+
 Environment: Linux Work container, Python 3.12. No KESADMIN connection, no Cua Driver executable, no OPENROUTER_API_KEY in this environment. User-reported Windows setup is not independently verified here.
 
 ## Executed

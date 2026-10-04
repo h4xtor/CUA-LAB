@@ -9,9 +9,36 @@ import time
 import urllib.request
 
 
+class NativeDialogs:
+    def choose_gguf(self):
+        import webview
+        from pathlib import Path
+        model_dir=Path('C:/AI/Modeller')
+        selected=webview.windows[0].create_file_dialog(webview.OPEN_DIALOG,directory=str(model_dir) if model_dir.is_dir() else '',allow_multiple=False,file_types=('GGUF model (*.gguf)',))
+        return selected[0] if selected else None
+
+
+def report_startup_failure(exc, interactive=True):
+    import traceback
+    from cua_lab.privacy import redact
+    from cua_lab.store import data_dir
+    folder = data_dir() / 'logs'
+    folder.mkdir(parents=True, exist_ok=True)
+    log = folder / 'startup.log'
+    with log.open('a', encoding='utf-8') as output:
+        output.write(time.strftime('%Y-%m-%d %H:%M:%S') + '\n' + redact(''.join(traceback.format_exception(exc))) + '\n')
+    message = f'CUA LAB startup failed: {type(exc).__name__}. Details: {log}'
+    if os.name == 'nt' and interactive:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0x10)
+    elif sys.stderr is not None:
+        print(message, file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--smoke-test', action='store_true')
+    parser.add_argument('--native-smoke-test', action='store_true')
     parser.add_argument('--browser', action='store_true')
     args = parser.parse_args()
     if os.name == 'nt':
@@ -26,21 +53,23 @@ def main():
     if os.name == 'nt':
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
     try:
-        listener.bind(('127.0.0.1', 8768))
+        # Build checks must not collide with the user's running app.
+        listener.bind(('127.0.0.1', 0 if args.smoke_test else 8768))
     except OSError:
         message = 'CUA LAB is already running, or port 8768 is occupied.'
-        if os.name == 'nt':
+        if os.name == 'nt' and not args.smoke_test:
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0)
         else:
             print(message)
         return 1
     listener.listen(128)
+    port=listener.getsockname()[1]
     import uvicorn
     from cua_lab.server import create_app
     token = secrets.token_urlsafe(32)
     app = create_app(token=token)
-    server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=8768, log_level='warning', access_log=False, timeout_graceful_shutdown=5, loop='asyncio'))
+    server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=port, log_level='warning', access_log=False, use_colors=False, timeout_graceful_shutdown=5, loop='asyncio'))
     thread = threading.Thread(target=lambda: server.run(sockets=[listener]), name='cua-backend', daemon=True)
     thread.start()
     try:
@@ -49,14 +78,25 @@ def main():
             if not thread.is_alive() or time.monotonic()>deadline:
                 raise RuntimeError('Backend startup failed')
             time.sleep(.05)
-        url = 'http://127.0.0.1:8768/#'+token
+        base_url=f'http://127.0.0.1:{port}'
+        url = base_url+'/#'+token
         if args.smoke_test:
             import json
-            with urllib.request.urlopen('http://127.0.0.1:8768/api/health', timeout=5) as response:
+            checks=['backend','authenticated_status','sqlite','static_resources']
+            if getattr(sys,'frozen',False):
+                from llama_cpp import LlamaGrammar
+                from cua_lab.protocol import Verification
+                assert LlamaGrammar.from_json_schema(json.dumps(Verification.model_json_schema()))
+                checks.append('built_in_gguf_engine')
+            with urllib.request.urlopen(base_url+'/api/health', timeout=5) as response:
                 assert json.load(response)['application'] == 'CUA LAB'
-            request = urllib.request.Request('http://127.0.0.1:8768/api/status', headers={'X-Cua-Token': token})
+            request = urllib.request.Request(base_url+'/api/status', headers={'X-Cua-Token': token})
             with urllib.request.urlopen(request, timeout=5) as response:
                 assert json.load(response)['runtime']['status'] == 'idle'
+            for path in ('/', '/static/app.js', '/static/style.css'):
+                with urllib.request.urlopen(base_url+path, timeout=5) as response:
+                    assert response.read(), f'Empty packaged resource: {path}'
+            (app.state.store.root / 'smoke-test.json').write_text(json.dumps({'status':'passed','checks':checks}), encoding='utf-8')
             print('PASS: resources, backend, authenticated status, SQLite initialization')
         elif args.browser:
             import webbrowser
@@ -66,8 +106,26 @@ def main():
                 time.sleep(.2)
         else:
             import webview
-            webview.create_window('CUA LAB', url, width=1440, height=1000, min_size=(900, 700), background_color='#0c1016')
-            webview.start(gui='edgechromium', private_mode=True)
+            webview.create_window('CUA LAB', url, width=1440, height=1000, min_size=(900, 700), background_color='#0c1016', js_api=NativeDialogs())
+            native_errors=[]
+            def native_smoke():
+                try:
+                    deadline=time.monotonic()+30
+                    while time.monotonic()<deadline:
+                        if webview.windows[0].evaluate_js("document.getElementById('connection')?.textContent === 'LIVE' && document.getElementById('state')?.textContent === 'IDLE'"):
+                            import json
+                            (app.state.store.root/'native-smoke-test.json').write_text(json.dumps({
+                                'status':'passed','checks':['native_webview2','javascript','authenticated_websocket','idle_runtime'],
+                            }),encoding='utf-8')
+                            return
+                        time.sleep(.1)
+                    raise RuntimeError('Native WebView2 did not reach authenticated idle state')
+                except Exception as exc:
+                    native_errors.append(exc)
+                finally:
+                    webview.windows[0].destroy()
+            webview.start(func=native_smoke if args.native_smoke_test else None, gui='edgechromium', private_mode=True)
+            if native_errors:raise native_errors[0]
     except KeyboardInterrupt:
         pass
     finally:
@@ -81,10 +139,5 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except Exception as exc:
-        message = 'CUA LAB startup failed: '+type(exc).__name__+'. Check WebView2, dependencies and port 8768.'
-        if os.name == 'nt':
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0x10)
-        else:
-            print(message, file=sys.stderr)
+        report_startup_failure(exc, interactive='--smoke-test' not in sys.argv)
         sys.exit(1)

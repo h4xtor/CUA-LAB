@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-04T00:00:00+02:00",
+  "title": "Design System: CUA LAB",
+  "extensions": {
+    "breakpoints": [{"name": "stacked", "value": "899px"}],
+    "motion": [{"name": "control-hover", "value": "background-color 150ms ease-out", "purpose": "Button feedback; disabled for reduced motion."}]
+  },
+  "components": [],
+  "narrative": {
+    "northStar": "Desktop and chat, always under your control",
+    "overview": "Neutral dark product UI. Keep the task composer and STOP visible while observations, chat and activity scroll independently.",
+    "dos": ["Keep explicit model activation.", "Preserve the complete durable activity log."],
+    "donts": ["Do not place the primary task action below a scrolling settings form."]
+  }
+}

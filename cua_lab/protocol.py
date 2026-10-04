@@ -57,6 +57,10 @@ def public_schemas(tools):
         schema = copy.deepcopy(tool['inputSchema'])
         schema['properties'] = {k: v for k, v in schema.get('properties', {}).items() if k in ALLOWED_FIELDS[name]}
         schema['additionalProperties'] = False
+        if name == 'click':
+            schema['anyOf']=[{'required':['element_token']},{'required':['x','y']}]
+            if 'element_token' in schema['properties']:
+                schema['properties']['element_token']['minLength']=1
         # If a driver version requires an unsupported field, disable that tool.
         if not set(schema.get('required', [])) <= set(schema['properties']):
             continue
@@ -76,6 +80,11 @@ def validate_action(action, schemas):
     except jsonschema.ValidationError as exc:
         raise ValueError('Invalid tool argument shape') from exc
     a = parsed.arguments
+    if parsed.tool=='click' and not (isinstance(a.get('element_token'),str) and a['element_token'] or all(k in a for k in ('x','y'))):
+        raise ValueError('Click requires a current element_token or both x and y; use a read tool to inspect')
+    if a.get('element_token'):
+        # A snapshot element and guessed pixels must not compete for delivery.
+        a.pop('x',None);a.pop('y',None)
     if 'text' in a and (not isinstance(a['text'], str) or len(a['text']) > 4000):
         raise ValueError('Text exceeds 4000 characters')
     if 'max_elements' in a and not 1 <= a['max_elements'] <= 150:
@@ -89,4 +98,14 @@ def validate_action(action, schemas):
             raise ValueError('Invalid exact target')
         if target.get('kind') == 'desktop' and target['display_id'] != 'primary':
             raise ValueError('Driver desktop input supports primary display only; use a window target')
+        if any(k in a for k in ('pid','window_id')):
+            if target['kind']!='window' or any(k in a and a[k]!=target[k] for k in ('pid','window_id')):
+                raise ValueError('Conflicting exact targets')
+            a.pop('pid',None);a.pop('window_id',None)
+        if a.get('element_token'):
+            if target['kind']!='window':raise ValueError('UIA token requires a window target')
+            # Snapshot tokens use the driver's flat window form. Never send
+            # competing explicit target representations on the native wire.
+            a.update(pid=target['pid'],window_id=target['window_id'])
+            a.pop('target')
     return parsed.model_dump()

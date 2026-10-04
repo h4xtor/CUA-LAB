@@ -18,7 +18,7 @@ class Runtime:
         self.metrics={};self.started=None;self.auto_sync=False
 
     def snapshot(self):
-        return {'session':self.sid,'status':self.status,'step':self.step,'pending':self.pending,'mode':getattr(self,'mode','auto'),'max_steps':getattr(self,'max_steps',40),'objective':getattr(self,'objective',''),'started':self.started,'metrics':self.metrics,'observation':self.observation,'busy':bool(self.worker and not self.worker.done())}
+        return {'session':self.sid,'status':self.status,'step':self.step,'pending':self.pending,'read_only':getattr(self,'read_only',False),'mode':getattr(self,'mode','auto'),'max_steps':getattr(self,'max_steps',40),'objective':getattr(self,'objective',''),'started':self.started,'metrics':self.metrics,'observation':self.observation,'busy':bool(self.worker and not self.worker.done())}
 
     def emit(self,kind,data):
         event=self.store.event(self.sid,self.step,kind,data)
@@ -36,10 +36,15 @@ class Runtime:
         if not 1<=max_steps<=100:raise ValueError('max_steps must be 1..100')
         self.sid=uuid.uuid4().hex;self.step=0;self.pending=None;self.epoch+=1
         self.mode=mode;self.vision=vision;self.max_steps=max_steps;self.objective=objective
-        self.read_only=read_only or bool(re.search(r'(?i)do not (click|modify|change)|read.only|kun (observer|læs)|ikke (klikke|ændre)',objective))
+        self.read_only=read_only or bool(re.search(r'(?i)do not (click|modify|change)|read.only|kun (observer|læs)|ikke (klikke|ændre)|\boprydningsplan\b|\bclean(?:up|ing)? plan\b',objective))
         self.status='running';self.resume_gate.set();self.recent=[];self.started=time.time()
         self.metrics={'requests':0,'input_tokens':0,'output_tokens':0,'cost':0,'cost_known':True,'failures':0,'actions':0,'retries':0}
         self.driver.invalidate()
+        if hasattr(self.driver,'preferred_app'):
+            names={'Calculator':r'(?i)\bcalculator\b|\blommeregner\b',
+                   'Chrome':r'(?i)\bchrome\b','Microsoft Edge':r'(?i)\bmicrosoft edge\b',
+                   'Desktop':r'(?i)\bdesktop\b|\bskrivebord(?:et)?\b'}
+            self.driver.preferred_app=next((name for name,pattern in names.items() if re.search(pattern,objective)),None)
         self.store.create(self.sid,objective,{'version':__version__,'model':self.provider.model,'mode':mode,'read_only':self.read_only,'vision':vision})
         self.emit('session_started',self.snapshot())
         self.worker=asyncio.create_task(self._run(),name='cua-task-'+self.sid)
@@ -86,7 +91,10 @@ class Runtime:
         return obs
 
     def context(self,obs):
-        return {'objective':self.objective,'read_only':self.read_only,'observation':redact(obs),'recent_actions':self.recent[-5:],'knowledge':self.learning.relevant(obs)}
+        recent=json.loads(json.dumps(self.recent[-5:]))
+        for record in recent:
+            record.get('action',record.get('skipped',{})).get('arguments',{}).pop('element_token',None)
+        return {'objective':self.objective,'read_only':self.read_only,'observation':redact(obs),'recent_actions':recent,'knowledge':self.learning.relevant(obs)}
 
     async def verify(self,obs,expected):
         self.emit('model_request_started',{'purpose':'verification','vision':bool(self.vision and obs.get('screenshot'))})
@@ -143,7 +151,7 @@ class Runtime:
                         # Desktop may have changed during model latency / user approval.
                         current=await self.observation_now()
                         if epoch!=self.epoch:continue
-                        if state_fingerprint(before)!=state_fingerprint(current):
+                        if state_fingerprint(before,action)!=state_fingerprint(current,action):
                             self.recent.append({'replan':'Desktop changed after planning; approval invalidated'})
                             self.emit('action_invalidated',{'reason':'Desktop changed; replanning'})
                             continue
@@ -153,7 +161,7 @@ class Runtime:
                             if len(matches)!=1 or not matches[0].get('element_token'):raise ValueError('Element identity changed before execution')
                             action['arguments']['element_token']=matches[0]['element_token']
                         stable=json.loads(json.dumps(action));stable['arguments'].pop('element_token',None)
-                        key=state_fingerprint(current)+json.dumps(stable,sort_keys=True)
+                        key=state_fingerprint(current,action)+json.dumps(stable,sort_keys=True)
                         duplicates[key]=duplicates.get(key,0)+1
                         if duplicates[key]>=4:raise RuntimeError('Stuck: repeated action without observable state change')
                         # No await occurs between final admission check and execute call.
@@ -178,8 +186,17 @@ class Runtime:
                         failures+=1;self.metrics['failures']+=1
                         # Validation errors may contain model text; never emit exception bodies.
                         message='Action/response rejected by validation, safety or evidence checks'
-                        self.emit('error',{'message':message,'error_type':type(exc).__name__})
-                        self.recent.append({'failure':message});fresh=True
+                        hint='Return exactly one valid decision matching the supplied schema and choose an available tool.'
+                        if 'Terminal states cannot contain actions' in str(exc):
+                            hint='A blocked, failed or completed decision must set action to null. To act, use continue and supply exactly one action.'
+                        elif 'An executable state needs an action' in str(exc):
+                            hint='A continue or needs_approval decision must include one available action.'
+                        elif 'string_too_long' in str(exc):
+                            hint='Keep user_message, observation, evidence and expected_result short and within their schema limits.'
+                        elif str(exc).startswith('Click requires'):
+                            hint='A click needs a current element_token or both x and y. To inspect the desktop, use get_desktop_state or get_window_state, never click.'
+                        self.emit('error',{'message':message,'error_type':type(exc).__name__,'validation_hint':hint})
+                        self.recent.append({'failure':message,'validation_hint':hint});fresh=True
                         if failures>=3:self.status='blocked';break
                 else:self.status='blocked';self.emit('error',{'message':'Maximum task steps reached'})
         except asyncio.CancelledError:
@@ -192,6 +209,9 @@ class Runtime:
             from .driver import DriverError
             from .provider import ProviderError
             detail=str(exc) if isinstance(exc,(DriverError,ProviderError)) else type(exc).__name__
+            if str(exc) in ('Stuck: repeated action without observable state change',
+                            'Three consecutive unverified actions; task stopped for review'):
+                detail=str(exc)
             self.emit('error',{'message':redact(detail)})
         finally:
             self.pending=None
