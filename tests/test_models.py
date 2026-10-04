@@ -94,7 +94,7 @@ async def test_local_cloud_model_refused():
 
 async def test_local_vision_reserves_context_for_image_tokens(tmp_path):
     class Local:
-        async def check_model(self,settings):return {'capabilities':['completion','vision'],'thinking':{'values':[False,True],'default':True}}
+        async def check_model(self,settings):return {'capabilities':['completion','vision'],'thinking':{'values':[False,True],'default':True},'model_info':{'general.architecture':'qwen3vl'}}
     image=tmp_path/'sessions/fixture/screenshots/image.png'
     image.parent.mkdir(parents=True);image.write_bytes(b'fixture-image')
     def respond(request):
@@ -102,6 +102,7 @@ async def test_local_vision_reserves_context_for_image_tokens(tmp_path):
         assert body['options']['num_ctx']==12288
         assert body['think'] is False
         assert body['messages'][1]['images']
+        assert body['messages'][-1]=={'role':'assistant','content':'<think>\n\n</think>\n\n'}
         return httpx.Response(200,json={'done':True,'message':{'content':'{"satisfied":true,"evidence":"437"}'}})
     provider=LocalProvider(tmp_path,ProviderSettings(provider='ollama',model='test'),Local(),
                            httpx.AsyncClient(transport=httpx.MockTransport(respond)))

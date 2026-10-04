@@ -296,7 +296,12 @@ class LocalProvider(StructuredProvider):
         payload={'model':self.model,'messages':messages,'stream':False}
         if self.settings.provider=='ollama':
             payload.update(format=schema,options={'temperature':0,'num_ctx':12288 if image else 8192,'num_predict':1800},keep_alive='10m')
-            if False in metadata.get('thinking',{}).get('values',[]):payload['think']=False
+            if False in metadata.get('thinking',{}).get('values',[]):
+                payload['think']=False
+                if metadata.get('model_info',{}).get('general.architecture')=='qwen3vl' and metadata['thinking'].get('default'):
+                    # Ollama's Qwen3-VL parser ignores think=false unless the
+                    # assistant turn is prefilled. Close thinking before JSON.
+                    messages.append({'role':'assistant','content':'<think>\n\n</think>\n\n'})
             path='/api/chat'
         else:
             payload.update(temperature=0,max_tokens=1800,response_format={'type':'json_schema','json_schema':{'name':'cua_output','strict':False,'schema':schema}})
@@ -311,7 +316,7 @@ class LocalProvider(StructuredProvider):
                 text=data['message']['content']
                 counts=(data.get('prompt_eval_count',0),data.get('eval_count',0))
                 if not data.get('done') or data.get('done_reason')=='length':
-                    raise ProviderError('Local response was incomplete')
+                    raise ProviderError('The local model reached its response limit before finishing. No action from this response was executed. Try a shorter task or choose another installed model in Models.')
             else:
                 choice=data['choices'][0]
                 if choice.get('finish_reason')!='stop':

@@ -50,3 +50,18 @@ async def test_plan_grammar_only_admits_current_snapshot_tokens(tmp_path):
         assert decision.action.arguments['element_token']=='current:1'
         assert 'enum' not in schemas['click']['properties']['element_token']
     finally:await provider.close()
+
+
+async def test_incomplete_local_response_is_never_accepted_as_an_action(tmp_path):
+    from cua_lab.provider import LocalProvider
+    from cua_lab.configuration import ProviderSettings
+    class Local:
+        async def check_model(self,settings):return {'capabilities':['completion']}
+    response={'done':True,'done_reason':'length','message':{'content':'{"satisfied":true,"evidence":"437"}'}}
+    provider=LocalProvider(tmp_path,ProviderSettings(provider='ollama',model='fixture'),Local(),
+        httpx.AsyncClient(transport=httpx.MockTransport(lambda request:httpx.Response(200,json=response))))
+    try:
+        with pytest.raises(ProviderError,match='response limit.*No action.*Models'):
+            await provider.verify({'expected_result':'437'})
+        assert provider.requests==0
+    finally:await provider.close()
