@@ -24,6 +24,14 @@ def test_extra_argument_rejected():
         validate_action({'tool': 'list_windows', 'arguments': {'secret': 'x'}}, schemas)
 
 
+def test_click_without_element_or_coordinates_rejected_before_native_dispatch():
+    from cua_lab.protocol import validate_action
+    action={'tool':'click','arguments':{'delivery_mode':'background',
+            'target':{'kind':'window','pid':44524,'window_id':723626}}}
+    with pytest.raises(ValueError,match='Click requires'):
+        validate_action(action,{'click':{'type':'object'}})
+
+
 def test_duplicate_equal_uia_targets_use_one_native_representation():
     from cua_lab.protocol import validate_action
     schema={'click':{'type':'object'}}

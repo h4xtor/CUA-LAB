@@ -125,6 +125,18 @@ def active_window():
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
     return {'pid':pid.value,'window_id':int(hwnd or 0)}
 
+def desktop_window():
+    """Inspect the shell's desktop in the background, never our foreground UI."""
+    if os.name!='nt':return None
+    from ctypes import wintypes
+    user32=ctypes.WinDLL('user32',use_last_error=True)
+    user32.GetShellWindow.restype=wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+    hwnd=user32.GetShellWindow();pid=wintypes.DWORD()
+    if not hwnd:return None
+    user32.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
+    return {'pid':pid.value,'window_id':int(hwnd)} if pid.value else None
+
 def machine_profile():
     result = {'hostname':platform.node(),'os':platform.platform(),'monitors':[]}
     if os.name == 'nt':
@@ -203,6 +215,11 @@ class CuaDriverController:
                 data,_,_=await self.call('list_windows',{})
                 self.windows=data.get('windows',[])
             active=active_window()
+            if self.preferred_app=='Desktop' or active and active.get('pid')==os.getpid():
+                self.windows=[w for w in self.windows if w.get('pid')!=os.getpid()]
+            if self.target is None and self.preferred_app=='Desktop':
+                self.target=desktop_window()
+                if not self.target:raise DriverError('Windows desktop is unavailable; check that Explorer is running')
             if self.target is None and self.preferred_app:
                 names={'Calculator':('calculator','lommeregner'),'Chrome':('chrome',),'Microsoft Edge':('microsoft edge','msedge')}
                 matches=[w for w in self.windows if w.get('pid') and w.get('window_id')
@@ -217,7 +234,11 @@ class CuaDriverController:
             # A named application's absence calls for discovery/launch, not a
             # capture of the user's unrelated foreground window.
             if self.target is None and active and not self.preferred_app:
-                self.target=next(({'pid':w['pid'],'window_id':w['window_id']} for w in self.windows if w.get('window_id')==active['window_id'] and w.get('pid')),None)
+                if active.get('pid')==os.getpid():
+                    self.target=desktop_window()
+                    if not self.target:raise DriverError('Windows desktop is unavailable; check that Explorer is running')
+                else:
+                    self.target=next(({'pid':w['pid'],'window_id':w['window_id']} for w in self.windows if w.get('window_id')==active['window_id'] and w.get('pid')),None)
             state={}; image=None; uia_ms=0; shot_ms=0
             if self.target:
                 args={**self.target,'include_screenshot':False,'include_accessibility_tree':True,'max_elements':100,'max_depth':8}
@@ -233,7 +254,7 @@ class CuaDriverController:
                     state={k:v for k,v in state.items() if k in ('pid','window_id','app_name','window_title')}
                     state['sensitive_interface']='password or credential field detected; use Take Control'
             obs={'active_window':active,'windows':self.windows,'window':state,'screenshot':image,'screenshot_withheld':sensitive_state(state),'latency':{'uia_ms':uia_ms,'screenshot_ms':shot_ms,'observation_ms':round((time.perf_counter()-started)*1000,1)}}
-            if not self.windows:
+            if not self.windows and not self.target:
                 raise DriverError('No Windows windows detected; check interactive desktop and cua-driver doctor')
             self.last_observation=obs
             return obs
@@ -270,6 +291,8 @@ class CuaDriverController:
             data,_,ms=await self.call(tool,wire_args)
             if tool in ('list_windows','launch_app','get_desktop_state'):
                 self.windows=[]
+                if tool=='get_desktop_state':
+                    self.target=None;self.preferred_app='Desktop'
                 if tool=='launch_app':
                     self.target=None
                     # Background launches deliberately preserve the foreground app.

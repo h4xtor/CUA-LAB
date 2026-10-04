@@ -35,6 +35,14 @@ def setup(tmp_path):
     runtime=Runtime(store,driver,provider,LearningBank(store,Path(tmp_path)))
     return runtime,driver,provider
 
+
+async def test_desktop_cleanup_plan_is_readonly_and_never_dispatches_input(tmp_path):
+    r,d,p=setup(tmp_path);d.preferred_app=None
+    await r.start('Vis mig skrivebordet og lav en oprydningsplan')
+    await r.worker
+    assert d.preferred_app=='Desktop' and r.read_only
+    assert d.actions==[] and r.status=='blocked'
+
 async def test_stop_cancels_model_and_all_future_actions(tmp_path):
     r,d,p=setup(tmp_path);p.hold=True
     await r.start('test',mode='auto')

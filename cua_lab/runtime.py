@@ -18,7 +18,7 @@ class Runtime:
         self.metrics={};self.started=None;self.auto_sync=False
 
     def snapshot(self):
-        return {'session':self.sid,'status':self.status,'step':self.step,'pending':self.pending,'mode':getattr(self,'mode','auto'),'max_steps':getattr(self,'max_steps',40),'objective':getattr(self,'objective',''),'started':self.started,'metrics':self.metrics,'observation':self.observation,'busy':bool(self.worker and not self.worker.done())}
+        return {'session':self.sid,'status':self.status,'step':self.step,'pending':self.pending,'read_only':getattr(self,'read_only',False),'mode':getattr(self,'mode','auto'),'max_steps':getattr(self,'max_steps',40),'objective':getattr(self,'objective',''),'started':self.started,'metrics':self.metrics,'observation':self.observation,'busy':bool(self.worker and not self.worker.done())}
 
     def emit(self,kind,data):
         event=self.store.event(self.sid,self.step,kind,data)
@@ -36,13 +36,14 @@ class Runtime:
         if not 1<=max_steps<=100:raise ValueError('max_steps must be 1..100')
         self.sid=uuid.uuid4().hex;self.step=0;self.pending=None;self.epoch+=1
         self.mode=mode;self.vision=vision;self.max_steps=max_steps;self.objective=objective
-        self.read_only=read_only or bool(re.search(r'(?i)do not (click|modify|change)|read.only|kun (observer|læs)|ikke (klikke|ændre)',objective))
+        self.read_only=read_only or bool(re.search(r'(?i)do not (click|modify|change)|read.only|kun (observer|læs)|ikke (klikke|ændre)|\boprydningsplan\b|\bclean(?:up|ing)? plan\b',objective))
         self.status='running';self.resume_gate.set();self.recent=[];self.started=time.time()
         self.metrics={'requests':0,'input_tokens':0,'output_tokens':0,'cost':0,'cost_known':True,'failures':0,'actions':0,'retries':0}
         self.driver.invalidate()
         if hasattr(self.driver,'preferred_app'):
             names={'Calculator':r'(?i)\bcalculator\b|\blommeregner\b',
-                   'Chrome':r'(?i)\bchrome\b','Microsoft Edge':r'(?i)\bmicrosoft edge\b'}
+                   'Chrome':r'(?i)\bchrome\b','Microsoft Edge':r'(?i)\bmicrosoft edge\b',
+                   'Desktop':r'(?i)\bdesktop\b|\bskrivebord(?:et)?\b'}
             self.driver.preferred_app=next((name for name,pattern in names.items() if re.search(pattern,objective)),None)
         self.store.create(self.sid,objective,{'version':__version__,'model':self.provider.model,'mode':mode,'read_only':self.read_only,'vision':vision})
         self.emit('session_started',self.snapshot())
@@ -192,6 +193,8 @@ class Runtime:
                             hint='A continue or needs_approval decision must include one available action.'
                         elif 'string_too_long' in str(exc):
                             hint='Keep user_message, observation, evidence and expected_result short and within their schema limits.'
+                        elif str(exc).startswith('Click requires'):
+                            hint='A click needs a current element_token or both x and y. To inspect the desktop, use get_desktop_state or get_window_state, never click.'
                         self.emit('error',{'message':message,'error_type':type(exc).__name__,'validation_hint':hint})
                         self.recent.append({'failure':message,'validation_hint':hint});fresh=True
                         if failures>=3:self.status='blocked';break

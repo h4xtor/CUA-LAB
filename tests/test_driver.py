@@ -3,6 +3,23 @@ import pytest
 from cua_lab.driver import MCPTransport,state_fingerprint
 
 
+async def test_desktop_request_uses_shell_window_instead_of_foreground_app(tmp_path,monkeypatch):
+    from cua_lab.driver import CuaDriverController
+    import cua_lab.driver as module
+    driver=CuaDriverController(tmp_path);driver.preferred_app='Desktop'
+    monkeypatch.setattr(module,'desktop_window',lambda:{'pid':10,'window_id':20},raising=False)
+    monkeypatch.setattr(module,'active_window',lambda:{'pid':90,'window_id':91})
+    async def connect():pass
+    async def call(name,args):
+        if name=='list_windows':return {'windows':[{'pid':90,'window_id':91,'title':'CUA LAB'}]}, {}, 1
+        assert args['pid']==10 and args['window_id']==20
+        return {'pid':10,'window_id':20,'window_title':'Program Manager','elements':[]}, {'content':[]}, 1
+    driver.connect=connect;driver.call=call
+    observation=await driver.observe('fixture')
+    assert observation['window']['window_id']==20
+    assert driver.target=={'pid':10,'window_id':20}
+
+
 async def test_requested_calculator_is_observed_even_when_another_app_is_foreground(tmp_path, monkeypatch):
     from cua_lab.driver import CuaDriverController
     import cua_lab.driver as module

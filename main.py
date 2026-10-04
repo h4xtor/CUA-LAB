@@ -53,7 +53,8 @@ def main():
     if os.name == 'nt':
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
     try:
-        listener.bind(('127.0.0.1', 8768))
+        # Build checks must not collide with the user's running app.
+        listener.bind(('127.0.0.1', 0 if args.smoke_test else 8768))
     except OSError:
         message = 'CUA LAB is already running, or port 8768 is occupied.'
         if os.name == 'nt' and not args.smoke_test:
@@ -63,11 +64,12 @@ def main():
             print(message)
         return 1
     listener.listen(128)
+    port=listener.getsockname()[1]
     import uvicorn
     from cua_lab.server import create_app
     token = secrets.token_urlsafe(32)
     app = create_app(token=token)
-    server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=8768, log_level='warning', access_log=False, use_colors=False, timeout_graceful_shutdown=5, loop='asyncio'))
+    server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=port, log_level='warning', access_log=False, use_colors=False, timeout_graceful_shutdown=5, loop='asyncio'))
     thread = threading.Thread(target=lambda: server.run(sockets=[listener]), name='cua-backend', daemon=True)
     thread.start()
     try:
@@ -76,7 +78,8 @@ def main():
             if not thread.is_alive() or time.monotonic()>deadline:
                 raise RuntimeError('Backend startup failed')
             time.sleep(.05)
-        url = 'http://127.0.0.1:8768/#'+token
+        base_url=f'http://127.0.0.1:{port}'
+        url = base_url+'/#'+token
         if args.smoke_test:
             import json
             checks=['backend','authenticated_status','sqlite','static_resources']
@@ -85,13 +88,13 @@ def main():
                 from cua_lab.protocol import Verification
                 assert LlamaGrammar.from_json_schema(json.dumps(Verification.model_json_schema()))
                 checks.append('built_in_gguf_engine')
-            with urllib.request.urlopen('http://127.0.0.1:8768/api/health', timeout=5) as response:
+            with urllib.request.urlopen(base_url+'/api/health', timeout=5) as response:
                 assert json.load(response)['application'] == 'CUA LAB'
-            request = urllib.request.Request('http://127.0.0.1:8768/api/status', headers={'X-Cua-Token': token})
+            request = urllib.request.Request(base_url+'/api/status', headers={'X-Cua-Token': token})
             with urllib.request.urlopen(request, timeout=5) as response:
                 assert json.load(response)['runtime']['status'] == 'idle'
             for path in ('/', '/static/app.js', '/static/style.css'):
-                with urllib.request.urlopen('http://127.0.0.1:8768'+path, timeout=5) as response:
+                with urllib.request.urlopen(base_url+path, timeout=5) as response:
                     assert response.read(), f'Empty packaged resource: {path}'
             (app.state.store.root / 'smoke-test.json').write_text(json.dumps({'status':'passed','checks':checks}), encoding='utf-8')
             print('PASS: resources, backend, authenticated status, SQLite initialization')
