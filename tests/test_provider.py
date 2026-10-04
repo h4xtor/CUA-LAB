@@ -24,3 +24,29 @@ async def test_auth_error_does_not_echo_provider_body(tmp_path,monkeypatch):
     with pytest.raises(ProviderError,match='401') as error:await provider.verify({})
     assert 'private echo' not in str(error.value)
     await provider.close()
+
+
+async def test_plan_grammar_only_admits_current_snapshot_tokens(tmp_path):
+    from cua_lab.provider import LocalProvider
+    from cua_lab.configuration import ProviderSettings
+    schemas={'click':{'type':'object','properties':{'element_token':{'type':'string'}}}}
+    class Local:
+        async def check_model(self,settings):return {'capabilities':['completion']}
+    def respond(request):
+        body=json.loads(request.content)
+        schema=body['format']
+        token_shape=schema['$defs']['Action']['anyOf'][0]['properties']['arguments']['properties']['element_token']
+        assert token_shape['enum']==['current:1']
+        assert schema['anyOf'][1]['properties']['action']=={'type':'null'}
+        return httpx.Response(200,json={'done':True,'message':{'content':json.dumps({
+            'status':'continue','observation':'Calculator','user_message':'Click One',
+            'action':{'tool':'click','arguments':{'element_token':'current:1'}},
+            'expected_result':'Display 1','requires_approval':False,'evidence':'',
+        })}})
+    provider=LocalProvider(tmp_path,ProviderSettings(provider='ollama',model='test'),Local(),
+                           httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+    try:
+        decision,_=await provider.decide({'observation':{'window':{'elements':[{'element_token':'current:1'}]}}},schemas)
+        assert decision.action.arguments['element_token']=='current:1'
+        assert 'enum' not in schemas['click']['properties']['element_token']
+    finally:await provider.close()

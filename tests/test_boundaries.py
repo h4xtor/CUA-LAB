@@ -24,6 +24,32 @@ def test_extra_argument_rejected():
         validate_action({'tool': 'list_windows', 'arguments': {'secret': 'x'}}, schemas)
 
 
+def test_duplicate_equal_uia_targets_use_one_native_representation():
+    from cua_lab.protocol import validate_action
+    schema={'click':{'type':'object'}}
+    args={'target':{'kind':'window','pid':1,'window_id':2},'pid':1,'window_id':2,'element_token':'s1:1'}
+    assert validate_action({'tool':'click','arguments':args},schema)['arguments']=={
+        'pid':1,'window_id':2,'element_token':'s1:1'}
+    args['pid']=9
+    with pytest.raises(ValueError,match='Conflicting'):
+        validate_action({'tool':'click','arguments':args},schema)
+
+
+def test_current_uia_token_has_exact_scope_without_redundant_pid():
+    from cua_lab.protocol import validate_action
+    from cua_lab.safety import classify
+    action={'tool':'click','arguments':{'element_token':'s1:1','x':10,'y':20}}
+    normalized=validate_action(action,{'click':{'type':'object'}})
+    assert normalized['arguments']=={'element_token':'s1:1'}
+    observation={'window':{'pid':1,'window_id':2,'window_title':'Calculator',
+                           'elements':[{'element_token':'s1:1','label':'One'}]}}
+    assert classify(normalized,observation) is None
+    normalized['arguments']['element_token']='stale:1'
+    assert classify(normalized,observation) is not None
+    normalized['arguments'].update(element_token='s1:1',pid=9,window_id=10)
+    assert classify(normalized,observation) is not None
+
+
 def test_readonly_enforced():
     from cua_lab.safety import classify
     with pytest.raises(PermissionError):

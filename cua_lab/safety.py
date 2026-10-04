@@ -24,6 +24,11 @@ def classify(action, observation, read_only=False):
     app = str(state.get('app_name', '')) + ' ' + str(state.get('window_title', ''))
     target = args.get('target', args)
     exact = target.get('pid') == state.get('pid') and target.get('window_id') == state.get('window_id') and state.get('pid') is not None
+    if args.get('element_token') and not any(k in args for k in ('target','pid','window_id')):
+        # A current UIA token already binds the inspected window in the driver.
+        # Explicit conflicting targets never qualify for this implicit form.
+        exact=state.get('pid') is not None and any(e.get('element_token')==args['element_token']
+                                                  for e in state.get('elements',[]))
     if tool == 'launch_app' and args.get('name') in ('Calculator', 'Chrome', 'Microsoft Edge'):
         return None
     if exact and CALC.search(app):

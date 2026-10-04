@@ -1,6 +1,8 @@
-"""Opt-in autonomous acceptance; uses only the approved installed local Qwen.
+"""Opt-in autonomous acceptance; uses an explicitly selected installed local Qwen.
 
 CUA_LIVE_TEST=1 python -m pytest tests/test_live_acceptance.py -s
+CUA_LIVE_MODEL=qwen3-vl:8b and CUA_LIVE_VISION=1 select the separately approved
+alternative and enable local screenshots. The default remains qwen2.5vl:7b.
 Evidence stays in pytest's private temporary directory, never in Git.
 """
 import asyncio
@@ -29,7 +31,7 @@ async def test_autonomous_local_qwen_calculator(tmp_path):
     store = Store(tmp_path)
     driver = CuaDriverController(tmp_path)
     runtime = Runtime(store, driver, service, LearningBank(store, tmp_path))
-    settings = ProviderSettings(provider='ollama', model='qwen2.5vl:7b')
+    settings = ProviderSettings(provider='ollama', model=os.getenv('CUA_LIVE_MODEL','qwen2.5vl:7b'))
     started = time.perf_counter()
     emit = runtime.emit
 
@@ -44,9 +46,17 @@ async def test_autonomous_local_qwen_calculator(tmp_path):
         await service.local.start(settings)
         await service.save(settings)
         async def local_error(response):
+            await response.aread()
             if not response.is_success:
-                await response.aread()
                 (tmp_path/'local-http-error.txt').write_text(response.text,encoding='utf-8')
+            elif response.request.url.path == '/api/chat':
+                data=response.json()
+                with (tmp_path/'local-generation.jsonl').open('a',encoding='utf-8') as output:
+                    output.write(json.dumps({
+                        'done_reason':data.get('done_reason'), 'output_tokens':data.get('eval_count'),
+                        'thinking_chars':len(data.get('message',{}).get('thinking','')),
+                        'content':data.get('message',{}).get('content',''),
+                    },ensure_ascii=False)+'\n')
         service.current.client.event_hooks['response']=[local_error]
         request=service.current._request
         async def record_response(*args, **kwargs):
@@ -67,7 +77,7 @@ async def test_autonomous_local_qwen_calculator(tmp_path):
         await runtime.start(
             'Open Calculator and calculate 19 x 23. Verify the final result 437 '
             'from the Calculator display. Use the observed UIA buttons.',
-            mode='auto', max_steps=20,
+            mode='auto', max_steps=20, vision=os.getenv('CUA_LIVE_VISION')=='1',
         )
         async with asyncio.timeout(600):
             while not runtime.worker.done():
@@ -97,3 +107,35 @@ async def test_autonomous_local_qwen_calculator(tmp_path):
         await driver.close()
         await service.close()
         store.close()
+
+
+async def test_stop_during_real_local_model_wait(tmp_path):
+    service=ModelService(tmp_path);store=Store(tmp_path)
+    driver=CuaDriverController(tmp_path)
+    runtime=Runtime(store,driver,service,LearningBank(store,tmp_path))
+    waiting=asyncio.Event()
+    async def trace(name,info):
+        if name=='http11.receive_response_headers.started':waiting.set()
+    async def watch(request):
+        if request.url.path=='/api/chat':request.extensions['trace']=trace
+    try:
+        settings=ProviderSettings(provider='ollama',model=os.getenv('CUA_LIVE_MODEL','qwen2.5vl:7b'))
+        await service.local.start(settings);await service.save(settings)
+        service.current.client.event_hooks['request']=[watch]
+        await runtime.start('Read the Calculator display. Do not click or change anything.',read_only=True)
+        await asyncio.wait_for(waiting.wait(),90)
+        started=time.perf_counter()
+        await runtime.stop();await asyncio.wait_for(runtime.worker,10)
+        elapsed=time.perf_counter()-started
+        await asyncio.sleep(.2)
+        events=store.events(runtime.sid)
+        assert runtime.status=='stopped' and runtime.metrics['actions']==0
+        assert not any(e['type']=='action_started' for e in events)
+        (tmp_path/'stop-evidence.json').write_text(json.dumps({
+            'status':runtime.status,'stop_cleanup_s':round(elapsed,3),'events':events,
+        },ensure_ascii=False),encoding='utf-8')
+        print(f'Real local model wait STOP PASS ({elapsed:.3f}s); private evidence: {tmp_path}',flush=True)
+    finally:
+        await runtime.stop()
+        if runtime.worker:await asyncio.gather(runtime.worker,return_exceptions=True)
+        await driver.close();await service.close();store.close()

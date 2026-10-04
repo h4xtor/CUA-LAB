@@ -44,6 +44,20 @@ async def test_builtin_vision_requires_projector_before_inference(tmp_path):
     await provider.close()
 
 
+def test_qwen_vision_gguf_needs_projector_even_for_text(tmp_path,monkeypatch):
+    import llama_cpp
+    from cua_lab.provider import GGUFProvider
+    source=tmp_path/'fixture.gguf';source.write_bytes(b'GGUF')
+    class Engine:
+        metadata={'general.architecture':'qwen25vl'}
+        closed=False
+        def close(self):self.closed=True
+    engine=Engine();monkeypatch.setattr(llama_cpp,'Llama',lambda **kwargs:engine)
+    provider=GGUFProvider(tmp_path,ProviderSettings(provider='gguf',gguf_path=str(source)))
+    with pytest.raises(ProviderError,match='matching mmproj'):provider._load()
+    assert engine.closed and provider._llm is None
+
+
 @pytest.mark.parametrize('kind', ['ollama','lmstudio'])
 async def test_local_structured_response_and_no_cloud_credentials(tmp_path,kind):
     calls=[]
@@ -76,6 +90,25 @@ async def test_local_cloud_model_refused():
     local.request=request
     with pytest.raises(ValueError,match='Cloud models'):
         await local.check_model(ProviderSettings(provider='ollama',model='remote-model'))
+
+
+async def test_local_vision_reserves_context_for_image_tokens(tmp_path):
+    class Local:
+        async def check_model(self,settings):return {'capabilities':['completion','vision'],'thinking':{'values':[False,True],'default':True}}
+    image=tmp_path/'sessions/fixture/screenshots/image.png'
+    image.parent.mkdir(parents=True);image.write_bytes(b'fixture-image')
+    def respond(request):
+        body=json.loads(request.content)
+        assert body['options']['num_ctx']==12288
+        assert body['think'] is False
+        assert body['messages'][1]['images']
+        return httpx.Response(200,json={'done':True,'message':{'content':'{"satisfied":true,"evidence":"437"}'}})
+    provider=LocalProvider(tmp_path,ProviderSettings(provider='ollama',model='test'),Local(),
+                           httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+    try:
+        result,_=await provider.verify({'expected_result':'437'},image='fixture/screenshots/image.png')
+        assert result.satisfied
+    finally:await provider.close()
 
 
 def test_compact_local_context_preserves_action_contract_without_duplicate_tree():
@@ -159,6 +192,9 @@ async def test_builtin_gguf_structured_verification_uses_local_engine(tmp_path, 
     provider=GGUFProvider(tmp_path,ProviderSettings(provider='gguf',gguf_path=str(fixture)))
     class LocalEngine:
         def create_chat_completion(self, **kwargs):
+            import inspect
+            from llama_cpp import Llama
+            inspect.signature(Llama.create_chat_completion).bind(None,**kwargs)
             assert kwargs['messages'][0]['role']=='system'
             assert kwargs['temperature']==0
             assert kwargs['grammar'] is not None
@@ -183,8 +219,9 @@ async def test_builtin_stop_signals_native_generation_and_blocks_model_switch(tm
     class Engine:
         def create_chat_completion(self,**kwargs):
             entered.set()
-            while not kwargs['stopping_criteria']([],[]):time.sleep(.01)
-            return {'choices':[{'message':{'content':'{}'}}]}
+            while True:
+                kwargs['logits_processor']([],[])
+                time.sleep(.01)
     monkeypatch.setattr(provider,'_load',lambda:Engine())
     pending=asyncio.create_task(provider.verify({}))
     try:

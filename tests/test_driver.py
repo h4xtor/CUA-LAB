@@ -64,6 +64,15 @@ def test_driver_bookkeeping_changes_do_not_invalidate_real_actions():
     assert state_fingerprint(before)!=state_fingerprint(after)
 
 
+def test_exact_window_admission_survives_unrelated_foreground_change():
+    before={'window':{'pid':1,'window_id':2,'elements':[{'label':'One'}]},'active_window':{'pid':9},'windows':[]}
+    after={**before,'active_window':{'pid':10}}
+    action={'tool':'click','arguments':{'pid':1,'window_id':2,'element_token':'s1:1'}}
+    assert state_fingerprint(before,action)==state_fingerprint(after,action)
+    assert state_fingerprint(before)!=state_fingerprint(after)
+    assert state_fingerprint(before,{'arguments':{'target':{'kind':'desktop'}}})!=state_fingerprint(after,{'arguments':{'target':{'kind':'desktop'}}})
+
+
 async def test_missing_requested_app_does_not_capture_unrelated_foreground(tmp_path,monkeypatch):
     from cua_lab.driver import CuaDriverController
     import cua_lab.driver as module

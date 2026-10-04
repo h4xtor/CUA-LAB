@@ -90,7 +90,10 @@ class Runtime:
         return obs
 
     def context(self,obs):
-        return {'objective':self.objective,'read_only':self.read_only,'observation':redact(obs),'recent_actions':self.recent[-5:],'knowledge':self.learning.relevant(obs)}
+        recent=json.loads(json.dumps(self.recent[-5:]))
+        for record in recent:
+            record.get('action',record.get('skipped',{})).get('arguments',{}).pop('element_token',None)
+        return {'objective':self.objective,'read_only':self.read_only,'observation':redact(obs),'recent_actions':recent,'knowledge':self.learning.relevant(obs)}
 
     async def verify(self,obs,expected):
         self.emit('model_request_started',{'purpose':'verification','vision':bool(self.vision and obs.get('screenshot'))})
@@ -147,7 +150,7 @@ class Runtime:
                         # Desktop may have changed during model latency / user approval.
                         current=await self.observation_now()
                         if epoch!=self.epoch:continue
-                        if state_fingerprint(before)!=state_fingerprint(current):
+                        if state_fingerprint(before,action)!=state_fingerprint(current,action):
                             self.recent.append({'replan':'Desktop changed after planning; approval invalidated'})
                             self.emit('action_invalidated',{'reason':'Desktop changed; replanning'})
                             continue
@@ -157,7 +160,7 @@ class Runtime:
                             if len(matches)!=1 or not matches[0].get('element_token'):raise ValueError('Element identity changed before execution')
                             action['arguments']['element_token']=matches[0]['element_token']
                         stable=json.loads(json.dumps(action));stable['arguments'].pop('element_token',None)
-                        key=state_fingerprint(current)+json.dumps(stable,sort_keys=True)
+                        key=state_fingerprint(current,action)+json.dumps(stable,sort_keys=True)
                         duplicates[key]=duplicates.get(key,0)+1
                         if duplicates[key]>=4:raise RuntimeError('Stuck: repeated action without observable state change')
                         # No await occurs between final admission check and execute call.
@@ -203,6 +206,9 @@ class Runtime:
             from .driver import DriverError
             from .provider import ProviderError
             detail=str(exc) if isinstance(exc,(DriverError,ProviderError)) else type(exc).__name__
+            if str(exc) in ('Stuck: repeated action without observable state change',
+                            'Three consecutive unverified actions; task stopped for review'):
+                detail=str(exc)
             self.emit('error',{'message':redact(detail)})
         finally:
             self.pending=None

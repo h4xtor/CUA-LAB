@@ -285,7 +285,7 @@ class CuaDriverController:
         self.transport=None
         self.invalidate()
 
-def state_fingerprint(obs):
+def state_fingerprint(obs, action=None):
     state=json.loads(json.dumps(obs.get('window',{})))
     for key in ('snapshot_id','screenshot_file_path','invalidated_snapshot_ids','walk_elapsed_ms','timeout_ms'):
         state.pop(key,None)
@@ -293,4 +293,8 @@ def state_fingerprint(obs):
         state.pop('tree_markdown',None)
     for element in state.get('elements',[]) or []:
         element.pop('element_token',None)
-    return hashlib.sha256(json.dumps({'window':state,'active':obs.get('active_window'),'windows':obs.get('windows')},sort_keys=True).encode()).hexdigest()
+    args=(action or {}).get('arguments',{})
+    target=args.get('target',args)
+    exact=all(target.get(k) is not None and target[k]==state.get(k) for k in ('pid','window_id'))
+    payload={'window':state} if exact else {'window':state,'active':obs.get('active_window'),'windows':obs.get('windows')}
+    return hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
