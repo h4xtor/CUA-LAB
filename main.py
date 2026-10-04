@@ -10,6 +10,11 @@ import urllib.request
 
 
 def main():
+    # PyInstaller --windowed builds have no stdio; uvicorn's logging calls sys.stdout.isatty().
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, 'w')
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, 'w')
     parser = argparse.ArgumentParser()
     parser.add_argument('--smoke-test', action='store_true')
     parser.add_argument('--browser', action='store_true')
@@ -82,7 +87,7 @@ if __name__ == '__main__':
         sys.exit(main())
     except Exception as exc:
         message = 'CUA LAB startup failed: '+type(exc).__name__+'. Check WebView2, dependencies and port 8768.'
-        if os.name == 'nt':
+        if os.name == 'nt' and '--smoke-test' not in sys.argv:
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, message, 'CUA LAB', 0x10)
         else:
