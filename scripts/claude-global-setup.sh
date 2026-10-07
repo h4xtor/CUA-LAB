@@ -8,6 +8,7 @@ claude plugin marketplace add DietrichGebert/ponytail
 claude plugin install ponytail@ponytail --scope user
 claude plugin marketplace add permanu/superskill
 claude plugin install superskill@superskill --scope user
+bash "$(dirname "$0")/claude-statusline.sh"
 
 npx -y skills add addyosmani/agent-skills --agent claude-code -g -y
 

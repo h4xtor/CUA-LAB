@@ -7,5 +7,6 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
 fi
 
 cd "$CLAUDE_PROJECT_DIR"
+bash scripts/claude-statusline.sh
 python3 -m pip install --quiet --disable-pip-version-check --root-user-action=ignore \
   -r requirements.txt pytest==8.3.5 pytest-asyncio==0.26.0 graphifyy==0.9.74
