@@ -25,7 +25,10 @@ $settings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | Conv
 $statusLine = [pscustomobject]@{ type = 'command'; command = "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded" }
 $settings | Add-Member -NotePropertyName statusLine -NotePropertyValue $statusLine -Force
 # WriteAllText: UTF-8 without BOM (Windows PowerShell's -Encoding utf8 adds one).
-[IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 32))
+# Write to a temp file and swap it in, so an interrupted run never leaves settings.json half-written.
+$tmp = "$settingsPath.$PID.tmp"
+[IO.File]::WriteAllText($tmp, ($settings | ConvertTo-Json -Depth 32))
+Move-Item -Force $tmp $settingsPath
 
 Run npx -y skills add addyosmani/agent-skills --agent claude-code -g -y
 

@@ -14,5 +14,9 @@ settings["statusLine"] = {
     "type": "command",
     "command": "bash -c 'f=$(ls -d \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}\"/plugins/cache/ponytail/ponytail/*/hooks/ponytail-statusline.sh 2>/dev/null | sort -V | tail -n1); [ -z \"$f\" ] || bash \"$f\"'",
 }
-json.dump(settings, open(path, "w", encoding="utf-8"), indent=2)
+# Write to a temp file and swap it in, so a crash or a parallel run never leaves settings.json half-written.
+tmp = f"{path}.{os.getpid()}.tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(settings, f, indent=2)
+os.replace(tmp, path)
 PY
