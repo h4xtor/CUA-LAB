@@ -10,7 +10,7 @@ Required externally: Windows 10/11 x64, Microsoft Edge WebView2 Runtime, an inte
 
 ## Choose a model
 
-- **Built in GGUF:** choose Built in (no external app) in Models, choose a local `.gguf` file, then Save connection. CUA LAB runs it inside its own process. The standard EXE bundles a CPU version of llama.cpp; GPU layer settings affect only a custom GPU-enabled build. A matching vision projector can be chosen for supported multimodal architectures. Start with a text GGUF and leave screenshots off until vision support for that model is verified. The engine loads on the first task; reduce context size if RAM is tight.
+- **Built in GGUF:** choose Built in (no external app) in Models, choose a local `.gguf` file, then Save connection. CUA LAB runs it inside its own process. The standard EXE bundles a CPU version of llama.cpp; GPU layer settings affect only a custom GPU-enabled build. A matching vision projector can be chosen for supported multimodal architectures. Screenshots are selected automatically; a text GGUF uses UI Automation, while a supported vision model requires its matching projector. The engine loads on the first task; reduce context size if RAM is tight.
 - **Ollama:** open Models, choose Ollama, click Start Ollama if needed, Refresh models, select an installed model, then Load local model & use. The app does not download models. It stops only a server it started itself, including that server's Windows runner processes.
 - **GGUF via Ollama:** in Models → Ollama → Import a local GGUF file, click Choose file, give it a new `cua-...` name, then Import GGUF. Select the imported model and load it. Existing names are never overwritten and source files are preserved. Only architectures supported by Ollama can be imported; separate vision projector files are not imported by this single-file flow.
 - **LM Studio:** enable its local server, choose LM Studio in Models, refresh the list, choose a model, and load/save. The current integration expects a local server without authentication. Loading uses LM Studio's `/api/v1/models/load` endpoint.
@@ -55,17 +55,17 @@ Internal GUI: `http://127.0.0.1:8768`. The launcher supplies a short-lived local
 
 Private data lives in `%LOCALAPPDATA%\CUA-LAB`, independently of the install folder. Upgrading the app does not erase it. For isolated testing, override `CUA_LAB_DATA_DIR`.
 
-UIA observations and task text go to the selected provider. Ollama and LM Studio use only the configured local server; OpenRouter sends these inputs to its API. Screenshots are included only when **Send screenshots to selected model** is enabled. Password-like UI prevents capture when detected; this heuristic cannot guarantee that a screenshot or arbitrary UI text contains no private data. Use Take control for credentials and keep sensitive applications out of view. Saved API keys are Windows-encrypted; local screenshots and histories are not encrypted by this MVP.
+UIA observations and task text go to the selected provider. Ollama and LM Studio use only the configured local server; OpenRouter sends these inputs to its API. Screenshot input is automatic: the app checks the selected model capability and sends images only when UI Automation is missing or degraded. Local preview images remain visible for text models. Password-like UI prevents capture when detected; this heuristic cannot guarantee that a screenshot or arbitrary UI text contains no private data. Use Take control for credentials and keep sensitive applications out of view. Saved API keys are Windows-encrypted; local screenshots and histories are not encrypted by this MVP.
 
 The runtime cannot run shell commands or write arbitrary repository paths. Unrecognized mutations need one-shot approval. Desktop content is treated as untrusted model input. Validation does not make semantic GUI safety infallible; inspect approvals. STOP prevents subsequent calls and kills the owned MCP process, but cannot undo input already delivered to Windows.
 
 ## Shared learning
 
-Three deterministic detectors currently produce candidates: Calculator UIA actions, Chromium address-bar shortcuts, and visual fallback after a degraded UIA tree. Records use closed enum fields and aggregate counters, not copied conversations. Confidence is a smoothed success ratio, not a calibrated probability.
+Deterministic detectors produce candidates for Calculator UIA actions, Chromium address-bar shortcuts, visual fallback after a degraded UIA tree, and verified application window locations. Records use closed enum fields and aggregate counters, not copied conversations. Confidence is a smoothed success ratio, not a calibrated probability.
 
-**Sync to GitHub** uses optional `CUA_LAB_GITHUB_TOKEN` with Contents write permission for this repository. It is separate from OpenRouter and is never sent to Qwen. Application code fixes the repository, branch, schema and generated paths under `cua_knowledge/`; no generic Git/tool path is exposed to the model. A failed or conflicting sync leaves candidates pending.
+**Sync to GitHub** uses `CUA_LAB_GITHUB_TOKEN` with Contents write permission for this repository, or the authenticated GitHub CLI when installed. It is separate from OpenRouter and is never sent to Qwen. Application code fixes the repository, branch, schema and generated paths under `cua_knowledge/`; no generic Git/tool path is exposed to the model. A failed or conflicting sync leaves candidates pending.
 
-Detections start machine-specific. Global records can be curated by developers after cross-machine validation. **Get shared knowledge** loads validated repository records into the local cache. Current desktop state always takes priority. Auto sync is off on each application start; enabling it only syncs after a task and requires higher confidence.
+Detections start machine-specific. Global records can be curated by developers after cross-machine validation. **Get shared knowledge** loads validated repository records into the local cache. Current desktop state always takes priority. Auto sync is enabled by default and its preference survives restarts. Newly validated learning is queued in the background as it becomes eligible; pending records are retried on startup. Machine-specific records can include the last verified window bounds as historical hints. Actions always use fresh window and control observations.
 
 ## Build
 
@@ -73,7 +73,7 @@ Detections start machine-specific. Global records can be curated by developers a
 .\build.ps1
 ```
 
-Outputs `dist\CUA-LAB\CUA-LAB.exe` and `dist\CUA-LAB-windows-x64.zip`. Build creates an isolated Python 3.12 environment, installs pinned dependencies, runs noninteractive tests, packages with PyInstaller and starts the packaged backend smoke test. Close running CUA LAB instances before building because the smoke test checks port 8768.
+Outputs `dist\CUA-LAB\CUA-LAB.exe` and `dist\CUA-LAB-windows-x64.zip`. Build creates an isolated Python 3.12 environment, installs pinned dependencies, runs noninteractive tests, packages with PyInstaller and starts the packaged backend smoke test on an available loopback port. Close the output executable before rebuilding its files.
 
 GitHub Actions uses the same script on Windows. CI does **not** perform interactive desktop tests or call OpenRouter.
 
@@ -89,4 +89,4 @@ GitHub Actions uses the same script on Windows. CI does **not** perform interact
 
 ## Known limitations
 
-Real Windows Calculator UIA actions produced 437 and packaged WebView2 startup passed on the local Windows machine. That acceptance uses a scripted planner, not live model inference. OpenRouter model/schema support and a fully model-driven run still require an approved configured provider. Desktop-global input is limited to the driver's primary display; exact window targets may reside on other monitors. No PyAutoGUI fallback, full replay controls, action editing, automatic application updates or calibrated confidence model. Captures currently favor correctness over minimum latency (multiple window snapshots per step). See the Windows verification report for tested boundaries.
+Real Windows Calculator UIA actions produced 437 with a scripted planner. Local autonomous model tests still fail through incorrect plans or local GPU errors; model-driven reliability is not established. Desktop-global input is limited to the driver's primary display; exact window targets may reside on other monitors. No PyAutoGUI fallback, full replay controls, action editing, automatic application updates or calibrated confidence model. Planning reuses the last verified observation, capture combines image and UIA, and admission checks omit images. Fresh target admission and independent result verification remain required. See the current progress report for validation boundaries.

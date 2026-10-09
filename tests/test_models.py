@@ -92,6 +92,19 @@ async def test_local_cloud_model_refused():
         await local.check_model(ProviderSettings(provider='ollama',model='remote-model'))
 
 
+@pytest.mark.parametrize('vision',[True,False])
+async def test_lmstudio_reads_selected_model_capabilities(tmp_path,vision):
+    local=LocalModels(tmp_path)
+    async def request(settings,method,path,body=None,timeout=15):
+        if path=='/v1/models':return {'data':[{'id':'fixture'}]}
+        assert path=='/api/v1/models'
+        return {'models':[{'key':'other','capabilities':{'vision':not vision}},
+                          {'key':'fixture','capabilities':{'vision':vision}}]}
+    local.request=request
+    result=await local.check_model(ProviderSettings(provider='lmstudio',model='fixture'))
+    assert ('vision' in result['capabilities']) is vision
+
+
 async def test_local_vision_reserves_context_for_image_tokens(tmp_path):
     class Local:
         async def check_model(self,settings):return {'capabilities':['completion','vision'],'thinking':{'values':[False,True],'default':True},'model_info':{'general.architecture':'qwen3vl'}}

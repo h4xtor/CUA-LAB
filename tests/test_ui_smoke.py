@@ -7,22 +7,27 @@ import pytest
 @pytest.mark.skipif(os.getenv('CUA_UI_TEST')!='1',reason='Optional local browser test')
 def test_real_browser_layout_health_and_failed_task(tmp_path, monkeypatch):
     import uvicorn
+    import socket
     from playwright.sync_api import sync_playwright, expect
     from cua_lab.server import create_app
     from cua_lab.driver import CuaDriverController, DriverError
     from cua_lab.model_service import ModelService
     class UnavailableDriver(CuaDriverController):
-        async def observe(self, sid, fresh=False):
+        async def observe(self, sid, fresh=False,capture=True):
             raise DriverError('Acceptance fixture: driver unavailable')
     monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
     provider=ModelService(tmp_path)
+    async def capabilities():return False
+    provider.supports_vision=capabilities
     async def installed_models(settings):return [{'id':'qwen2.5vl:7b'},{'id':'gemma3:4b'}]
     provider.local.models=installed_models
     async def installed_metadata(settings):return {'capabilities':['completion','vision']}
     provider.local.check_model=installed_metadata
     app=create_app(tmp_path,token='browser-test-token',driver=UnavailableDriver(tmp_path),provider=provider)
-    server=uvicorn.Server(uvicorn.Config(app,host='127.0.0.1',port=8768,log_level='error',access_log=False))
-    thread=threading.Thread(target=server.run,daemon=True);thread.start()
+    listener=socket.socket();listener.bind(('127.0.0.1',0))
+    port=listener.getsockname()[1]
+    server=uvicorn.Server(uvicorn.Config(app,host='127.0.0.1',port=port,log_level='error',access_log=False))
+    thread=threading.Thread(target=lambda:server.run(sockets=[listener]),daemon=True);thread.start()
     deadline=time.monotonic()+10
     while not server.started:
         assert time.monotonic()<deadline
@@ -32,7 +37,7 @@ def test_real_browser_layout_health_and_failed_task(tmp_path, monkeypatch):
             browser=p.chromium.launch(headless=True,args=['--no-sandbox'])
             page=browser.new_page(viewport={'width':1440,'height':1100})
             errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-            page.goto('http://127.0.0.1:8768/#browser-test-token')
+            page.goto(f'http://127.0.0.1:{port}/#browser-test-token')
             expect(page.locator('#connection')).to_have_text('LIVE')
             expect(page.locator('#quick-model option')).to_have_count(2)
             page.locator('#quick-model-menu summary').click()
@@ -66,6 +71,10 @@ def test_real_browser_layout_health_and_failed_task(tmp_path, monkeypatch):
             page.locator('#prompt').fill('Inspect desktop read-only')
             page.locator('#start').click()
             expect(page.locator('#state')).to_have_text('FAILED')
+            expect(page.locator('#phase')).to_contain_text('failed')
+            expect(page.locator('#phase-detail')).to_contain_text('Task failed')
+            assert page.locator('#vision').count()==0
+            expect(page.locator('#vision-label')).to_contain_text('automatic')
             expect(page.locator('#events .event').first).to_be_visible()
             assert 'Acceptance fixture: driver unavailable' in page.locator('#notice').inner_text()
             expect(page.locator('#chat-messages')).to_contain_text('Inspect desktop read-only')
@@ -83,7 +92,10 @@ def test_real_browser_layout_health_and_failed_task(tmp_path, monkeypatch):
                 app.state.store.event(sid,i,'audit_event',{'message':f'Persistent event {i}'})
             total=len(app.state.store.events(sid))
             page.reload()
-            expect(page.locator('#events .event')).to_have_count(total)
+            try:expect(page.locator('#events .event')).to_have_count(total)
+            except AssertionError:
+                print('Recovery diagnostics:',page.locator('#notice').inner_text(),page.locator('#connection').inner_text(),errors)
+                raise
             expect(page.locator('#events')).to_contain_text('Persistent event 0')
             expect(page.locator('#events')).to_contain_text('Persistent event 299')
             capture_dir=tmp_path
@@ -97,7 +109,7 @@ def test_real_browser_layout_health_and_failed_task(tmp_path, monkeypatch):
                 for selector in ('[data-control=stop]','#start','#prompt'):
                     control=page.locator(selector).bounding_box()
                     assert 0<=control['y'] and control['y']+control['height']<=height, (width,height,selector,control)
-                assert page.locator('.task').evaluate('(el)=>el.scrollHeight<=el.clientHeight+2')
+                assert page.locator('.task').evaluate('(el)=>el.scrollHeight<=el.clientHeight+2'), (width,height,page.locator('.task').evaluate('(el)=>[el.scrollHeight,el.clientHeight]'))
                 if width<900:
                     chat=page.locator('.task').bounding_box();desktop=page.locator('.desktop').bounding_box()
                     assert desktop['y']>=chat['y']+chat['height']-1

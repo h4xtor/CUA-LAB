@@ -17,6 +17,25 @@ def test_private_images_require_authentication(tmp_path):
         assert client.get('/api/images/health/test.png',headers={'X-Cua-Token':'test-auth'}).status_code==404
 
 
+def test_loopback_origin_requires_exact_host_and_port(tmp_path):
+    from cua_lab.server import create_app
+    with TestClient(create_app(tmp_path,token='fixture')) as client:
+        headers={'X-Cua-Token':'fixture','Host':'127.0.0.1:51234','Origin':'http://127.0.0.1:51234'}
+        assert client.get('/api/status',headers=headers).status_code==200
+        headers['Origin']='http://127.0.0.1:8768'
+        assert client.get('/api/status',headers=headers).status_code==403
+
+
+def test_auto_learning_sync_is_enabled_by_default_and_preference_survives_restart(tmp_path):
+    from cua_lab.server import create_app
+    headers={'X-Cua-Token':'fixture'}
+    with TestClient(create_app(tmp_path,token='fixture')) as client:
+        assert client.get('/api/status',headers=headers).json()['auto_sync']
+        assert client.post('/api/memory/auto/off',headers=headers).json()=={'enabled':False}
+    with TestClient(create_app(tmp_path,token='fixture')) as client:
+        assert not client.get('/api/status',headers=headers).json()['auto_sync']
+
+
 def test_session_recovery_returns_every_event_after_cursor(tmp_path):
     from cua_lab.server import create_app
     app=create_app(tmp_path,token='fixture')

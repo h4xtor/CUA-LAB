@@ -16,7 +16,7 @@ from .privacy import redact, sensitive_state
 
 class ComputerController(Protocol):
     schemas: dict
-    async def observe(self, sid: str, fresh: bool = False) -> dict: ...
+    async def observe(self, sid: str, fresh: bool = False, capture: bool = True) -> dict: ...
     async def execute(self, action: dict) -> dict: ...
     async def close(self): ...
     def invalidate(self): ...
@@ -205,7 +205,7 @@ class CuaDriverController:
         data=unpack(result)
         return data, result, round((time.perf_counter()-started)*1000,1)
 
-    async def observe(self, sid, fresh=False):
+    async def observe(self, sid, fresh=False, capture=True):
         async with self.lock:
             if fresh:
                 self.invalidate()
@@ -243,14 +243,12 @@ class CuaDriverController:
             if self.target:
                 args={**self.target,'include_screenshot':False,'include_accessibility_tree':True,'max_elements':100,'max_depth':8}
                 state,_,uia_ms=await self.call('get_window_state',args)
-                if not sensitive_state(state):
-                    capture={**self.target,'include_accessibility_tree':False,'include_screenshot':True}
-                    _,raw,shot_ms=await self.call('get_window_state',capture)
-                    # A screenshot-only call must not replace the UIA token map; fresh
-                    # tokens are captured after the image for an unambiguous final snapshot.
-                    state,_,uia_ms=await self.call('get_window_state',args)
+                if not sensitive_state(state) and capture:
+                    # Keep the credential preflight; capture image and fresh tokens together.
+                    capture_args={**args,'include_screenshot':True}
+                    state,raw,shot_ms=await self.call('get_window_state',capture_args)
                     image=self._save_image(sid,raw)
-                else:
+                elif sensitive_state(state):
                     state={k:v for k,v in state.items() if k in ('pid','window_id','app_name','window_title')}
                     state['sensitive_interface']='password or credential field detected; use Take Control'
             obs={'active_window':active,'windows':self.windows,'window':state,'screenshot':image,'screenshot_withheld':sensitive_state(state),'latency':{'uia_ms':uia_ms,'screenshot_ms':shot_ms,'observation_ms':round((time.perf_counter()-started)*1000,1)}}
@@ -286,6 +284,9 @@ class CuaDriverController:
                 if not any(e.get('element_token')==args['element_token'] for e in elements):
                     raise DriverError('Stale or foreign element token; refresh observation')
             wire_args=dict(args)
+            if args.get('element_token') and not any(k in args for k in ('target','pid','window_id')):
+                # Native Windows builds still require pid despite token-only schemas.
+                wire_args.update(self.target or {})
             if tool=='launch_app' and args.get('name')=='Calculator' and 'aumid' in self.raw_schemas.get(tool,{}).get('properties',{}):
                 wire_args={'aumid':'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App'}
             data,_,ms=await self.call(tool,wire_args)
@@ -310,14 +311,19 @@ class CuaDriverController:
 
 def state_fingerprint(obs, action=None):
     state=json.loads(json.dumps(obs.get('window',{})))
-    for key in ('snapshot_id','screenshot_file_path','invalidated_snapshot_ids','walk_elapsed_ms','timeout_ms'):
+    for key in ('snapshot_id','capture_id','screenshot_file_path','screenshot_width','screenshot_height','screenshot_mime_type','invalidated_snapshot_ids','walk_elapsed_ms','timeout_ms'):
         state.pop(key,None)
     if state.get('elements') is not None:
         state.pop('tree_markdown',None)
     for element in state.get('elements',[]) or []:
         element.pop('element_token',None)
+        element.pop('screenshot_frame',None)
     args=(action or {}).get('arguments',{})
     target=args.get('target',args)
     exact=all(target.get(k) is not None and target[k]==state.get(k) for k in ('pid','window_id'))
+    if args.get('element_token') and not any(k in args for k in ('target','pid','window_id')):
+        # Tokens refresh between reads; window identity is compared here, then
+        # Runtime rebinds the exact element against the fresh snapshot.
+        exact=state.get('pid') is not None and state.get('window_id') is not None
     payload={'window':state} if exact else {'window':state,'active':obs.get('active_window'),'windows':obs.get('windows')}
     return hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()

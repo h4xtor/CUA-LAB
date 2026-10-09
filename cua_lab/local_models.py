@@ -47,7 +47,12 @@ class LocalModels:
             if 'completion' not in data.get('capabilities', []):
                 raise ValueError('This model does not support text generation')
             return data
-        return {}
+        try:data=await self.request(settings,'GET','/api/v1/models')
+        except ValueError:
+            # Older OpenAI-compatible servers have no native capability endpoint.
+            return {'capabilities':['completion']}
+        row=next((r for r in data.get('models',[]) if settings.model in (r.get('key'),r.get('id'))),{})
+        return {'capabilities':['completion','vision'] if row.get('capabilities',{}).get('vision') is True else ['completion']}
 
     async def load(self, settings):
         await self.check_model(settings)

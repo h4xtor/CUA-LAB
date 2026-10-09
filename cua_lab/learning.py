@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import time
 from typing import Literal
 import httpx
@@ -14,17 +15,25 @@ REPOSITORY='h4xtor/CUA-LAB'
 PREFIX='cua_knowledge/'
 APPLICATIONS=('Calculator','Chrome','Microsoft Edge','Discord','Unknown')
 
+class WindowBounds(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    x:int=Field(ge=-100000,le=100000)
+    y:int=Field(ge=-100000,le=100000)
+    width:int=Field(gt=0,le=100000)
+    height:int=Field(gt=0,le=100000)
+
 class Learning(BaseModel):
     model_config=ConfigDict(extra='forbid', strict=True)
     application: Literal['Calculator','Chrome','Microsoft Edge','Discord','Unknown']
-    problem: Literal['degraded_uia','calculator_input','address_bar_focus']
-    strategy: Literal['visual_fallback','uia_targeting','keyboard_shortcut']
+    problem: Literal['degraded_uia','calculator_input','address_bar_focus','window_location']
+    strategy: Literal['visual_fallback','uia_targeting','keyboard_shortcut','observed_window']
     scope: Literal['global','machine']='machine'
     source_machine: str=Field(pattern=r'^[a-f0-9]{16}$')
     observations: int=Field(default=1,ge=1,le=1000000)
     successes: int=Field(default=0,ge=0,le=1000000)
     failures: int=Field(default=0,ge=0,le=1000000)
     last_validated: int=Field(default=0,ge=0)
+    last_window_bounds: WindowBounds|None=None
 
     @property
     def id(self):
@@ -75,6 +84,8 @@ class LearningBank:
             problem='calculator_input';strategy='uia_targeting'
         elif app in ('Chrome','Microsoft Edge') and tool=='hotkey' and [k.lower() for k in args.get('keys',[])] in (['ctrl','l'],['control','l']):
             problem='address_bar_focus';strategy='keyboard_shortcut'
+        elif verified and app!='Unknown' and after.get('window',{}).get('window_bounds'):
+            problem='window_location';strategy='observed_window'
         if not problem:return None
         record=Learning(application=app,problem=problem,strategy=strategy,source_machine=machine_id())
         existing=next((r for r in self.store.learnings() if Learning.model_validate({k:v for k,v in r.items() if k!='synced'}).id==record.id),None)
@@ -83,6 +94,9 @@ class LearningBank:
             record.observations+=1
         if verified:record.successes+=1
         else:record.failures+=1
+        if verified and after.get('window',{}).get('window_bounds'):
+            try:record.last_window_bounds=WindowBounds.model_validate(after['window']['window_bounds'])
+            except ValueError:pass
         record.last_validated=int(time.time())
         self.store.save_learning(record)
         return {**record.model_dump(),'id':record.id,'confidence':record.confidence}
@@ -117,7 +131,17 @@ class LearningBank:
     async def sync(self,auto=False):
         async with self.lock:
             token=os.getenv('CUA_LAB_GITHUB_TOKEN','').strip()
+            if not token and shutil.which('gh'):
+                process=await asyncio.create_subprocess_exec(shutil.which('gh'),'auth','token',stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL,creationflags=0x08000000 if os.name=='nt' else 0)
+                try:
+                    output,_=await asyncio.wait_for(process.communicate(),5)
+                    if process.returncode==0:token=output.decode().strip()
+                except (TimeoutError,asyncio.CancelledError):
+                    if process.returncode is None:process.kill();await process.wait()
+                    raise
             if not token:raise ValueError('Set CUA_LAB_GITHUB_TOKEN with Contents write access to h4xtor/CUA-LAB. Candidates remain local.')
+            from .privacy import register_private_key
+            register_private_key(token)
             outcomes=[]
             async with httpx.AsyncClient(timeout=20,follow_redirects=False,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json'}) as client:
                 for raw in self.store.learnings():
@@ -139,12 +163,18 @@ class LearningBank:
                         record.successes=max(record.successes,old.successes)
                         record.failures=max(record.failures,old.failures)
                         record.last_validated=max(record.last_validated,old.last_validated)
+                        if old.last_validated>raw.get('last_validated',0):record.last_window_bounds=old.last_window_bounds
                     elif current.status_code!=404:
                         raise ValueError(f'GitHub read HTTP {current.status_code}; candidates kept pending')
                     payload={'message':'memory: validate '+record.problem,'branch':'main','content':base64.b64encode((record.model_dump_json(indent=2)+'\n').encode()).decode()}
                     if sha:payload['sha']=sha
                     written=await client.put(url,json=payload)
                     if written.status_code not in (200,201):raise ValueError(f'GitHub write HTTP {written.status_code}; candidate kept pending; no force overwrite')
-                    self.store.save_learning(record,synced=True)
+                    latest=next((r for r in self.store.learnings() if Learning.model_validate({k:v for k,v in r.items() if k!='synced'}).id==record.id),None)
+                    updated=Learning.model_validate({k:v for k,v in latest.items() if k!='synced'}) if latest else record
+                    for field in ('observations','successes','failures','last_validated'):
+                        setattr(updated,field,max(getattr(updated,field),getattr(record,field)))
+                    if updated.last_validated<=record.last_validated and updated.observations<=record.observations:updated.last_window_bounds=record.last_window_bounds
+                    self.store.save_learning(updated,synced=updated.model_dump()==record.model_dump())
                     outcomes.append({'id':record.id,'path':path})
             return outcomes

@@ -54,7 +54,7 @@ def main():
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
     try:
         # Build checks must not collide with the user's running app.
-        listener.bind(('127.0.0.1', 0 if args.smoke_test else 8768))
+        listener.bind(('127.0.0.1', 0 if args.smoke_test or args.native_smoke_test else 8768))
     except OSError:
         message = 'CUA LAB is already running, or port 8768 is occupied.'
         if os.name == 'nt' and not args.smoke_test:

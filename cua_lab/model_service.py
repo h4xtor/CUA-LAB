@@ -32,6 +32,7 @@ class ModelService:
     async def decide(self, *args, **kwargs): return await self.current.decide(*args, **kwargs)
     async def verify(self, *args, **kwargs): return await self.current.verify(*args, **kwargs)
     async def health(self): return await self.current.health()
+    async def supports_vision(self): return await self.current.supports_vision()
 
     async def save(self, settings, api_key=None, clear_key=False):
         if isinstance(self.current,GGUFProvider) and self.current._active and not self.current._active.done():

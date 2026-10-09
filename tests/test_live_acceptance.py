@@ -1,8 +1,9 @@
 """Opt-in autonomous acceptance; uses an explicitly selected installed local Qwen.
 
 CUA_LIVE_TEST=1 python -m pytest tests/test_live_acceptance.py -s
-CUA_LIVE_MODEL=qwen3-vl:8b and CUA_LIVE_VISION=1 select the separately approved
-alternative and enable local screenshots. The default remains qwen2.5vl:7b.
+CUA_LIVE_MODEL=qwen3-vl:8b selects an installed alternative.
+Screenshots follow selected model capabilities and available UIA evidence.
+The default remains qwen2.5vl:7b.
 Evidence stays in pytest's private temporary directory, never in Git.
 """
 import asyncio
@@ -31,6 +32,7 @@ async def test_autonomous_local_qwen_calculator(tmp_path):
     store = Store(tmp_path)
     driver = CuaDriverController(tmp_path)
     runtime = Runtime(store, driver, service, LearningBank(store, tmp_path))
+    runtime.auto_sync=False  # Model acceptance must not publish test data.
     settings = ProviderSettings(provider='ollama', model=os.getenv('CUA_LIVE_MODEL','qwen2.5vl:7b'))
     started = time.perf_counter()
     emit = runtime.emit
@@ -75,7 +77,7 @@ async def test_autonomous_local_qwen_calculator(tmp_path):
                 'pid':window['pid'],'window_id':window['window_id'],'element_token':clear['element_token'],
             }})
         await runtime.start(
-            'Open Calculator and calculate 19 x 23. Verify the final result 437 '
+            'Open Calculator and calculate 19 x 23. Verify the final result '
             'from the Calculator display. Use the observed UIA buttons.',
             mode='auto', max_steps=20, vision=os.getenv('CUA_LIVE_VISION')=='1',
         )
@@ -105,6 +107,7 @@ async def test_autonomous_local_qwen_calculator(tmp_path):
         if runtime.worker:
             await asyncio.gather(runtime.worker, return_exceptions=True)
         await driver.close()
+        await service.local.request(settings,'POST','/api/generate',{'model':settings.model,'stream':False,'keep_alive':0},timeout=20)
         await service.close()
         store.close()
 
@@ -138,4 +141,6 @@ async def test_stop_during_real_local_model_wait(tmp_path):
     finally:
         await runtime.stop()
         if runtime.worker:await asyncio.gather(runtime.worker,return_exceptions=True)
-        await driver.close();await service.close();store.close()
+        await driver.close()
+        await service.local.request(settings,'POST','/api/generate',{'model':settings.model,'stream':False,'keep_alive':0},timeout=20)
+        await service.close();store.close()

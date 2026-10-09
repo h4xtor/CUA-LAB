@@ -76,6 +76,7 @@ async def test_real_calculator_step_pause_resume_stop_and_result(tmp_path):
     store = Store(tmp_path)
     driver = CuaDriverController(tmp_path)
     runtime = Runtime(store, driver, CalculatorPlanner(), LearningBank(store, tmp_path))
+    runtime.auto_sync=False  # Desktop acceptance must not publish test data.
 
     async def pending():
         async with asyncio.timeout(45):

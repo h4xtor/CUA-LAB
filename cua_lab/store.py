@@ -55,5 +55,13 @@ class Store:
     def learnings(self):
         return [{**json.loads(r['data']), 'synced': bool(r['synced'])} for r in self.db.execute('SELECT * FROM learnings ORDER BY id')]
 
+    def setting(self,key,default=None):
+        row=self.db.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone()
+        return json.loads(row['value']) if row else default
+
+    def save_setting(self,key,value):
+        self.db.execute('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,json.dumps(value)))
+        self.db.commit()
+
     def close(self):
         self.db.close()

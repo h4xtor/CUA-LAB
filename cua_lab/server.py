@@ -55,20 +55,25 @@ def create_app(root=None,token=None,driver=None,provider=None):
 
     @asynccontextmanager
     async def lifespan(app):
+        runtime.queue_sync()
         yield
         if runtime.worker and not runtime.worker.done():
             await runtime.stop();await asyncio.gather(runtime.worker,return_exceptions=True)
+        if runtime.sync_worker and not runtime.sync_worker.done():
+            runtime.sync_worker.cancel();await asyncio.gather(runtime.sync_worker,return_exceptions=True)
         await driver.close();await provider.close();store.close()
 
     app=FastAPI(title='CUA LAB',version=__version__,lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
     app.state.runtime=runtime;app.state.token=token;app.state.store=store
-    origins={'http://127.0.0.1:8768','http://localhost:8768'}
+    def same_origin(connection):
+        host=connection.headers.get('host','')
+        return host.split(':')[0] in ('127.0.0.1','localhost','testserver') and connection.headers.get('origin')=='http://'+host
 
     @app.middleware('http')
     async def local_security(request:Request,call_next):
         if request.headers.get('host','').split(':')[0] not in ('127.0.0.1','localhost','testserver'):
             return __import__('starlette.responses',fromlist=['JSONResponse']).JSONResponse({'detail':'Invalid host'},status_code=403)
-        if request.headers.get('origin') and request.headers['origin'] not in origins:
+        if request.headers.get('origin') and not same_origin(request):
             return __import__('starlette.responses',fromlist=['JSONResponse']).JSONResponse({'detail':'Invalid origin'},status_code=403)
         if request.url.path.startswith('/api/') and request.url.path!='/api/health':
             if not hmac.compare_digest(request.headers.get('x-cua-token',''),token):
@@ -77,7 +82,7 @@ def create_app(root=None,token=None,driver=None,provider=None):
         response.headers['Cache-Control']='no-store'
         response.headers['X-Content-Type-Options']='nosniff'
         response.headers['Referrer-Policy']='no-referrer'
-        response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self' ws://127.0.0.1:8768 ws://localhost:8768; frame-ancestors 'none'; base-uri 'none'"
+        response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self' ws://"+request.headers['host']+"; frame-ancestors 'none'; base-uri 'none'"
         return response
 
     @app.exception_handler(ValueError)
@@ -179,7 +184,12 @@ def create_app(root=None,token=None,driver=None,provider=None):
         return result
 
     @app.post('/api/memory/sync')
-    async def sync():return {'synced':await bank.sync()}
+    async def sync():
+        outcomes=await bank.sync()
+        runtime.memory_status={'status':'synced','detail':f'{len(outcomes)} learning records sent to GitHub'}
+        runtime.emit('memory_sync_status',runtime.memory_status)
+        runtime.emit('memory_sync',{'synced':outcomes})
+        return {'synced':outcomes}
 
     @app.post('/api/memory/refresh')
     async def refresh():
@@ -188,11 +198,18 @@ def create_app(root=None,token=None,driver=None,provider=None):
 
     @app.post('/api/memory/auto/{enabled}')
     async def auto(enabled:Literal['on','off']):
-        runtime.auto_sync=enabled=='on';return {'enabled':runtime.auto_sync}
+        runtime.auto_sync=enabled=='on';store.save_setting('auto_sync',runtime.auto_sync)
+        if not runtime.auto_sync:
+            if runtime.sync_worker and not runtime.sync_worker.done():
+                runtime.sync_worker.cancel();await asyncio.gather(runtime.sync_worker,return_exceptions=True)
+            runtime.memory_status={'status':'disabled','detail':'Automatic sync disabled; learning remains local'}
+        else:runtime.memory_status={'status':'idle','detail':'Automatic GitHub sync ready'}
+        runtime.queue_sync()
+        return {'enabled':runtime.auto_sync}
 
     @app.websocket('/ws')
     async def websocket(ws:WebSocket):
-        if ws.headers.get('origin') not in origins:
+        if not same_origin(ws):
             await ws.close(code=1008);return
         await ws.accept()
         try:

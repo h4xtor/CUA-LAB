@@ -178,3 +178,16 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 @media (prefers-reduced-motion: no-preference) {
   button { transition: background-color 150ms ease-out; }
 }
+
+#task-progress { padding: 8px 16px; border-bottom: 1px solid var(--border); display: grid; gap: 3px; flex-shrink: 0; }
+#task-progress strong { text-transform: capitalize; }
+#phase-detail { font-size: 12px; overflow-wrap: anywhere; }
+#phase-time { color: var(--muted); font-size: 11px; }
+@media (max-height: 600px) {
+  #task-progress { padding: 3px 12px; gap: 0; }
+  #phase-detail { max-height: 36px; overflow: auto; }
+  #phase-time:empty { display: none; }
+}
+@media (max-width: 899px) and (max-height: 600px) {
+  #workspace { grid-template-rows: minmax(360px, 1.6fr) minmax(50px, .5fr) minmax(35px, .3fr) auto; }
+}

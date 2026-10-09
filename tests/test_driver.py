@@ -3,6 +3,52 @@ import pytest
 from cua_lab.driver import MCPTransport,state_fingerprint
 
 
+async def test_admission_observation_keeps_uia_tokens_without_capturing_image(tmp_path,monkeypatch):
+    from cua_lab.driver import CuaDriverController
+    import cua_lab.driver as module
+    driver=CuaDriverController(tmp_path);driver.target={'pid':1,'window_id':2};driver.windows=[driver.target]
+    calls=[]
+    async def connect():pass
+    async def call(name,args):
+        calls.append(args)
+        return {'elements':[{'element_token':'fresh:1'}]}, {}, 1
+    driver.connect=connect;driver.call=call
+    monkeypatch.setattr(module,'active_window',lambda:None)
+    obs=await driver.observe('fixture',capture=False)
+    assert len(calls)==1 and calls[0]['include_accessibility_tree']
+    assert not calls[0]['include_screenshot'] and obs['screenshot'] is None
+    assert obs['window']['elements'][0]['element_token']=='fresh:1'
+
+
+async def test_token_only_click_binds_inspected_native_window(tmp_path):
+    from cua_lab.driver import CuaDriverController
+    driver=CuaDriverController(tmp_path);driver.target={'pid':1,'window_id':2}
+    driver.schemas={'click':{'type':'object','properties':{'element_token':{'type':'string'}}}}
+    driver.last_observation={'window':{'elements':[{'element_token':'fresh:1'}]}}
+    async def call(name,args):
+        assert args=={'element_token':'fresh:1','pid':1,'window_id':2}
+        return {},{},1
+    driver.call=call
+    await driver.execute({'tool':'click','arguments':{'element_token':'fresh:1'}})
+
+
+async def test_preview_captures_image_and_tokens_together_after_credential_check(tmp_path,monkeypatch):
+    from cua_lab.driver import CuaDriverController
+    import cua_lab.driver as module
+    driver=CuaDriverController(tmp_path);driver.target={'pid':1,'window_id':2};driver.windows=[driver.target]
+    calls=[]
+    async def connect():pass
+    async def call(name,args):
+        calls.append(args)
+        return {'elements':[{'element_token':f'snapshot:{len(calls)}'}]}, {}, 1
+    driver.connect=connect;driver.call=call
+    monkeypatch.setattr(module,'active_window',lambda:None)
+    obs=await driver.observe('fixture')
+    assert len(calls)==2 and not calls[0]['include_screenshot']
+    assert calls[1]['include_accessibility_tree'] and calls[1]['include_screenshot']
+    assert obs['window']['elements'][0]['element_token']=='snapshot:2'
+
+
 async def test_desktop_request_uses_shell_window_instead_of_foreground_app(tmp_path,monkeypatch):
     from cua_lab.driver import CuaDriverController
     import cua_lab.driver as module
@@ -71,6 +117,12 @@ def test_snapshot_tokens_do_not_look_like_desktop_changes():
     assert state_fingerprint(before)==state_fingerprint(after)
 
 
+def test_image_capture_metadata_does_not_invalidate_uia_admission():
+    state={'window':{'pid':1,'window_id':2,'elements':[{'label':'One','element_token':'fresh:1'}]}}
+    preview={'window':{**state['window'],'elements':[{'label':'One','element_token':'fresh:1','screenshot_frame':{'x':1,'y':2,'w':30,'h':40}}],'capture_id':'image:1','screenshot_width':600,'screenshot_height':800,'screenshot_mime_type':'image/png'}}
+    assert state_fingerprint(preview)==state_fingerprint(state)
+
+
 def test_driver_bookkeeping_changes_do_not_invalidate_real_actions():
     before={'window':{'pid':1,'window_id':2,'invalidated_snapshot_ids':['old1'],
                      'walk_elapsed_ms':1,'timeout_ms':200,'elements':[{'label':'One','element_token':'s1:1'}]}}
@@ -88,6 +140,15 @@ def test_exact_window_admission_survives_unrelated_foreground_change():
     assert state_fingerprint(before,action)==state_fingerprint(after,action)
     assert state_fingerprint(before)!=state_fingerprint(after)
     assert state_fingerprint(before,{'arguments':{'target':{'kind':'desktop'}}})!=state_fingerprint(after,{'arguments':{'target':{'kind':'desktop'}}})
+
+
+def test_token_only_admission_ignores_unrelated_foreground_change():
+    before={'window':{'pid':1,'window_id':2,'elements':[{'element_token':'s:1','label':'One'}]},'active_window':{'pid':9},'windows':[]}
+    after={**before,'window':{**before['window'],'elements':[{'element_token':'s:2','label':'One'}]},'active_window':{'pid':10}}
+    action={'tool':'click','arguments':{'element_token':'s:1'}}
+    assert state_fingerprint(before,action)==state_fingerprint(after,action)
+    action['arguments']['pid']=3
+    assert state_fingerprint(before,action)!=state_fingerprint(after,action)
 
 
 async def test_missing_requested_app_does_not_capture_unrelated_foreground(tmp_path,monkeypatch):
