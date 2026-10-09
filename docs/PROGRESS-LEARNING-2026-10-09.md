@@ -33,7 +33,7 @@ All models were installed local routes; no paid route was used. Each autonomous 
 | qwen2.5vl:7b | FAIL — three consecutive unverified actions; test pair 122.35 seconds | PASS — 0.039 seconds cleanup |
 | gemma3:4b | FAIL — GPU/model-engine errors; latest retry also failed cleanup and STOP setup | Earlier run PASS — 0.030 seconds; latest retry FAIL |
 | hf.co/mradermacher/Holo-3.1-4B-GGUF:Q4_K_M | FAIL — three consecutive unverified actions; latest test pair 68.84 seconds | PASS — 0.028 seconds cleanup |
-| qwen3.5:9b | FAIL — local HTTP 500; earlier test pair 97.32 seconds | PASS — 0.082 seconds cleanup |
+| qwen3.5:9b | FAIL — insufficient available GPU memory; latest test pair 21.99 seconds | PASS — 0.024 seconds cleanup |
 
 Input compaction reduced observed warm Qwen3-VL planning calls from roughly 7–9 to 4–5 seconds. Different UI states and response lengths make this an indicative observation, not a controlled benchmark or a measured whole-task speedup. No successful autonomous calculation was established.
 
