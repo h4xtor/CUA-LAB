@@ -1,0 +1,17 @@
+{
+  "application": "Calculator",
+  "problem": "calculator_input",
+  "strategy": "uia_targeting",
+  "scope": "machine",
+  "source_machine": "09dc5d246c6b3712",
+  "observations": 7,
+  "successes": 7,
+  "failures": 0,
+  "last_validated": 1791567897,
+  "last_window_bounds": {
+    "x": 475,
+    "y": 93,
+    "width": 543,
+    "height": 726
+  }
+}
